@@ -6,10 +6,22 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { connect } from './db/index.js';
 import { createApi } from './app.js';
 import { jwtSecret } from './lib/auth.js';
+import { ensureOwner } from './services/owner.js';
 
 jwtSecret(); // fail at start-up, not at first sign-in, if JWT_SECRET is missing in production
 
 const { db } = await connect();
+
+// Optional: create the business + owner login on start-up (e.g. on Railway, where the DB is private).
+// Only creates what's missing; never resets an existing password.
+if (process.env.OWNER_EMAIL && process.env.OWNER_PASSWORD) {
+  try {
+    console.log(await ensureOwner(db, {
+      email: process.env.OWNER_EMAIL, password: process.env.OWNER_PASSWORD, orgName: process.env.ORG_NAME ?? 'My grounds', rename: !!process.env.ORG_NAME,
+    }));
+  } catch (err) { console.error('Owner set-up skipped:', (err as Error).message); }
+}
+
 const app = createApi(db, { log: true });
 
 // In production the API also serves the built web app (single Railway service).
