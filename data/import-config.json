@@ -1,0 +1,198 @@
+{
+  "_readme": [
+    "Maps the current Excel workbook onto the app. Run: npm run import -- \"data/EVENTENUERS 2024.xlsx\" --replace",
+    "Slot times below are PLACEHOLDERS: only Royale/Unique have time headers (8:00, 12:00, 16:00, 20:00); the 'between' columns are guessed 2h offsets.",
+    "Fix 'slots' (names/times) and 'columns' here, then re-run the import. Prices are left at 0 because the workbook has none.",
+    "'promoters': whole-slot holds by these names (or aliases) are imported as promoter bookings. Add more spellings to 'aliases' as needed."
+  ],
+  "orgName": "Eventenuers",
+  "city": "Gurugram",
+  "slots": {
+    "morning": {
+      "name": "Morning",
+      "start": "08:00",
+      "end": "12:00"
+    },
+    "lateMorning": {
+      "name": "Late morning",
+      "start": "10:00",
+      "end": "14:00"
+    },
+    "second": {
+      "name": "Second",
+      "start": "12:00",
+      "end": "16:00"
+    },
+    "afternoon": {
+      "name": "Afternoon",
+      "start": "14:00",
+      "end": "18:00"
+    },
+    "daynight": {
+      "name": "Day-night",
+      "start": "16:00",
+      "end": "20:00"
+    },
+    "evening": {
+      "name": "Evening",
+      "start": "18:00",
+      "end": "22:00"
+    },
+    "night": {
+      "name": "Night",
+      "start": "20:00",
+      "end": "24:00"
+    }
+  },
+  "grounds": [
+    {
+      "name": "Royale",
+      "sources": [
+        {
+          "sheet": "Royale",
+          "dateCol": "A",
+          "startYear": 2024,
+          "columns": {
+            "B": "morning",
+            "C": "second",
+            "D": "daynight",
+            "E": "night"
+          }
+        },
+        {
+          "sheet": "Royale",
+          "dateCol": "I",
+          "columns": {
+            "K": "morning",
+            "L": "lateMorning",
+            "M": "second",
+            "N": "afternoon",
+            "O": "daynight",
+            "P": "evening",
+            "Q": "night"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Unique",
+      "sources": [
+        {
+          "sheet": "unique may",
+          "dateCol": "A",
+          "startYear": 2024,
+          "columns": {
+            "B": "morning",
+            "C": "second",
+            "D": "daynight",
+            "E": "night"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sakatpur",
+      "sources": [
+        {
+          "sheet": "sakatpur",
+          "dateCol": "A",
+          "columns": {
+            "B": "morning",
+            "C": "lateMorning",
+            "D": "second",
+            "E": "daynight",
+            "F": "evening",
+            "G": "night"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Nischay",
+      "sources": [
+        {
+          "sheet": "NISCHAY ",
+          "dateCol": "A",
+          "columns": {
+            "B": "morning",
+            "C": "lateMorning",
+            "D": "second",
+            "E": "afternoon",
+            "F": "daynight",
+            "G": "evening",
+            "H": "night"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Nischay 2",
+      "sources": [
+        {
+          "sheet": "NISCHAY 2",
+          "dateCol": "A",
+          "columns": {
+            "C": "morning",
+            "D": "lateMorning",
+            "E": "lateMorning",
+            "F": "second",
+            "G": "afternoon",
+            "H": "daynight",
+            "I": "evening",
+            "J": "night"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Crown",
+      "sources": [
+        {
+          "sheet": "CROWN",
+          "dateCol": "A",
+          "columns": {
+            "C": "morning",
+            "D": "lateMorning",
+            "E": "second",
+            "F": "afternoon",
+            "G": "daynight",
+            "H": "evening",
+            "I": "night"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Champion Den",
+      "sources": [
+        {
+          "sheet": "CHAMPION DEN",
+          "dateCol": "A",
+          "columns": {
+            "B": "morning",
+            "C": "lateMorning",
+            "D": "second",
+            "E": "daynight",
+            "F": "evening",
+            "G": "night"
+          }
+        }
+      ]
+    }
+  ],
+  "promoters": [
+    {
+      "name": "Rana",
+      "aliases": [
+        "rana"
+      ]
+    },
+    {
+      "name": "Ravinder",
+      "aliases": [
+        "ravinder",
+        "ravinder goru"
+      ]
+    }
+  ]
+}

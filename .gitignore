@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.pglite
+*.log
+.DS_Store
+
+# Real business data (team names) — keep out of git
+data/*.xlsx
+data/import-report.md
+
+# Local tool config (not part of the app)
+.slingshot/

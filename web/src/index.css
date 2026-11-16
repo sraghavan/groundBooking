@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+
+  /* "Whites & turf": cream page, deep pitch green brand */
+  --color-paper: #f7f5ee;
+  --color-card: #ffffff;
+  --color-ink: #1b2a1f;
+  --color-muted: #6b7568;
+  --color-line: #e4e0d2;
+  --color-pitch: #14532d;
+  --color-pitch-2: #166534;
+  --color-clay: #c9a96e;
+
+  /* Slot states */
+  --color-free: #15803d;
+  --color-free-bg: #e8f6ec;
+  --color-partial: #b45309;
+  --color-partial-bg: #fdf1dc;
+  --color-full: #b42339;
+  --color-full-bg: #fbe7ea;
+}
+
+html, body { background: var(--color-paper); color: var(--color-ink); }
+body { font-family: var(--font-sans); -webkit-tap-highlight-color: transparent; }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+input, select, textarea { font-size: 16px; } /* prevent iOS zoom on focus */
