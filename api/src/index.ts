@@ -5,6 +5,9 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { connect } from './db/index.js';
 import { createApi } from './app.js';
+import { jwtSecret } from './lib/auth.js';
+
+jwtSecret(); // fail at start-up, not at first sign-in, if JWT_SECRET is missing in production
 
 const { db } = await connect();
 const app = createApi(db, { log: true });
