@@ -6,7 +6,7 @@ export type PriceSource = 'rule' | 'slot' | 'ground' | 'none' | 'promoter' | 'ev
 export type Quote = { price: number; source: PriceSource; ruleId?: string; note?: string };
 export type QuoteQuery = {
   teamId?: string | null; groundId: string; slotTemplateId?: string | null;
-  kind?: 'match' | 'promoter' | 'event'; eventType?: (typeof EVENT_TYPES)[number] | null; matchCount?: number | null;
+  kind?: 'match' | 'event'; bookedBy?: 'direct' | 'promoter'; eventType?: (typeof EVENT_TYPES)[number] | null; matchCount?: number | null;
 };
 
 type Rule = { id: string; teamId: string | null; groundId: string | null; slotTemplateId: string | null; price: number; createdAt: Date };
@@ -40,11 +40,18 @@ export function pickRule(rules: Rule[], q: { teamId?: string | null; groundId?: 
  * The UI pre-fills this and the user may override it on the booking.
  */
 export async function quotePrice(db: DB, orgId: string, q: QuoteQuery): Promise<Quote> {
+  if (q.bookedBy === 'promoter') {
+    const own = await promoterRate(db, orgId, q);
+    if (own) return own;
+  }
   if (q.kind === 'event' && q.eventType) {
     const ev = await eventQuote(db, orgId, q.eventType, q.matchCount);
     if (ev) return ev;
   }
-  if (q.kind === 'promoter') return promoterQuote(db, orgId, q);
+  if (q.bookedBy === 'promoter') {
+    const base = await teamQuote(db, orgId, { ...q, teamId: null });
+    return { ...base, price: base.price * 2, note: 'Two teams’ price (no promoter rate set)' };
+  }
   return teamQuote(db, orgId, q);
 }
 
@@ -62,19 +69,20 @@ async function eventQuote(db: DB, orgId: string, type: (typeof EVENT_TYPES)[numb
 }
 
 /**
- * A promoter pays for the whole slot: their own rule for this ground/slot,
- * else their default rate, else the normal price for two teams.
+ * A promoter's standard rate, the same at every ground: per match (a whole slot),
+ * half day, or full day. Tournaments use the event per-match price.
+ * Returns null when the promoter has no rate for this, so the event default or
+ * two teams' price applies instead.
  */
-async function promoterQuote(db: DB, orgId: string, q: QuoteQuery): Promise<Quote> {
-  if (q.teamId) {
-    const rules = await db.select().from(priceRules).where(and(eq(priceRules.orgId, orgId), eq(priceRules.teamId, q.teamId)));
-    const rule = pickRule(rules, q);
-    if (rule) return { price: rule.price, source: 'rule', ruleId: rule.id };
-    const [t] = await db.select({ rate: teams.defaultRate }).from(teams).where(and(eq(teams.id, q.teamId), eq(teams.orgId, orgId)));
-    if (t?.rate != null) return { price: t.rate, source: 'promoter' };
-  }
-  const base = await teamQuote(db, orgId, { ...q, teamId: null });
-  return { ...base, price: base.price * 2, note: 'Two teams’ price (no promoter rate set)' };
+async function promoterRate(db: DB, orgId: string, q: QuoteQuery): Promise<Quote | null> {
+  if (!q.teamId) return null;
+  const [t] = await db.select({ match: teams.defaultRate, half: teams.rateHalfDay, full: teams.rateFullDay })
+    .from(teams).where(and(eq(teams.id, q.teamId), eq(teams.orgId, orgId)));
+  if (!t) return null;
+  const rate = q.kind === 'event'
+    ? q.eventType === 'half_day' ? t.half : q.eventType === 'full_day' ? t.full : null
+    : t.match;
+  return rate == null ? null : { price: rate, source: 'promoter' };
 }
 
 async function teamQuote(db: DB, orgId: string, q: QuoteQuery): Promise<Quote> {

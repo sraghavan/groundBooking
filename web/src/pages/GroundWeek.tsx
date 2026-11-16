@@ -1,51 +1,56 @@
-import { useParams, useSearchParams } from 'react-router';
+import { useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router';
+import { Inline } from './Home';
 import { useQuery } from '@tanstack/react-query';
 import { api, type GroundAvailability } from '../api';
 import { addDays, cx, fmtDate, fmtDay, startOfWeek, todayISO } from '../lib';
 import { Button, ErrorNote, Page, PageHeader, Spinner } from '../components/ui';
-import { Legend, SlotTile } from '../components/slots';
+import { rowId, SlotTable, StatusFilter, type SlotFilter, type SlotGroup, type SlotRow } from '../components/SlotTable';
 
-/** Seven-day view of one ground. */
+/** Seven-day table of one ground, grouped by day, filterable by status. */
 export function GroundWeekPage() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const weekStart = startOfWeek(params.get('date') ?? todayISO());
+  const filter = (params.get('status') ?? 'all') as SlotFilter;
   const q = useQuery({
     queryKey: ['availability-week', id, weekStart],
     queryFn: () => api<GroundAvailability[]>(`/availability?from=${weekStart}&days=7&groundId=${id}`),
   });
   const g = q.data?.[0];
-  const go = (n: number) => setParams({ date: addDays(weekStart, n) }, { replace: true });
   const today = todayISO();
+  const set = (date: string, status: SlotFilter) => setParams({ date, ...(status !== 'all' ? { status } : {}) }, { replace: true });
+
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const groups: SlotGroup[] = (g?.days ?? []).map((d) => ({
+    key: d.date,
+    title: (
+      <span className="flex items-center gap-2">
+        <span className={cx('font-bold', d.date === today && 'text-pitch')}>{fmtDay(d.date)} {fmtDate(d.date)}</span>
+        {d.date === today && <span className="rounded-full bg-pitch px-2 py-0.5 text-[10px] font-bold uppercase text-white">Today</span>}
+      </span>
+    ),
+    actions: <Link to={`/bookings/new?groundId=${id}&date=${d.date}`} className="text-xs font-semibold text-pitch">+ Custom time</Link>,
+    rows: d.slots.map((cell) => ({ key: `${d.date}:${cell.key}`, groundId: id!, date: d.date, cell })),
+  }));
 
   return (
     <>
       <PageHeader title={g?.groundName ?? 'Ground'} back="/" sub={
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => go(-7)} aria-label="Previous week">‹</Button>
-          <div className="flex-1 text-center text-sm font-semibold">{fmtDate(weekStart)} – {fmtDate(addDays(weekStart, 6), { day: 'numeric', month: 'short', year: 'numeric' })}</div>
-          <Button variant="secondary" size="sm" onClick={() => go(7)} aria-label="Next week">›</Button>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => set(addDays(weekStart, -7), filter)} aria-label="Previous week">‹</Button>
+            <div className="flex-1 text-center text-sm font-semibold">{fmtDate(weekStart)} – {fmtDate(addDays(weekStart, 6), { day: 'numeric', month: 'short', year: 'numeric' })}</div>
+            <Button variant="secondary" size="sm" onClick={() => set(addDays(weekStart, 7), filter)} aria-label="Next week">›</Button>
+          </div>
+          <StatusFilter value={filter} onChange={(f) => set(weekStart, f)} rows={groups.flatMap((x) => x.rows)} />
         </div>
       } />
-      <Page>
-        <div className="mb-4"><Legend /></div>
+      <Page className="max-w-4xl">
         <ErrorNote error={q.error} />
-        {q.isLoading ? <Spinner /> : g && (
-          <div className="space-y-2">
-            {g.days.map((d) => (
-              <div key={d.date} className={cx('flex gap-3 rounded-2xl border bg-white p-2.5', d.date === today ? 'border-pitch' : 'border-line')}>
-                <div className="w-11 shrink-0 pt-1 text-center">
-                  <div className={cx('text-[10px] font-bold uppercase', d.date === today ? 'text-pitch' : 'text-muted')}>{fmtDay(d.date)}</div>
-                  <div className="text-xl font-bold tabular">{Number(d.date.slice(8))}</div>
-                </div>
-                <div className="grid min-w-0 flex-1 grid-cols-1 gap-1.5 sm:grid-cols-2">
-                  {d.slots.length ? d.slots.map((s) => <SlotTile key={s.key} cell={s} groundId={g.groundId} date={d.date} />)
-                    : <p className="py-2 text-sm text-muted">No slots</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {q.isLoading ? <Spinner /> : g && <SlotTable groups={groups} filter={filter}
+          expanded={expanded} onRowClick={(r: SlotRow) => setExpanded(expanded === rowId(r) ? null : rowId(r))}
+          renderExpanded={(r) => <Inline r={r} onClose={() => setExpanded(null)} />} />}
       </Page>
     </>
   );

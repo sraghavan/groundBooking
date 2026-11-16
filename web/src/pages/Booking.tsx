@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, EVENT_LABEL, type Booking, type BookingKind, type BookingStatus, type EventType, type Party, type Payment, type Quote, type Side, type Team } from '../api';
+import { api, ApiError, EVENT_LABEL, type BookedBy, type Booking, type BookingKind, type BookingStatus, type EventType, type Party, type Payment, type Quote, type Side, type Team } from '../api';
 import { useAccounts, useGrounds, usePromoters, useTeams } from '../hooks';
 import { cx, fmtDate, fmtLong, fmtRange, inr, parseISO, pocLine, todayISO } from '../lib';
-import { Button, Card, Chip, ErrorNote, Field, Input, MoneyInput, Page, PageHeader, Segmented, Select, Sheet, Spinner, StatusBadge, Textarea } from '../components/ui';
+import { Button, Card, Chip, ConfirmSheet, ErrorNote, Field, Input, MoneyInput, Page, PageHeader, Segmented, Select, Sheet, Spinner, StatusBadge, Textarea } from '../components/ui';
 import { TeamPicker, type TeamRef } from '../components/TeamPicker';
 
 type PartyRow = {
@@ -32,7 +32,7 @@ export function BookingPage() {
 
   const [f, setF] = useState({
     groundId: params.get('groundId') ?? '', date: params.get('date') ?? todayISO(), slotTemplateId: params.get('slot') ?? '',
-    startTime: '', endTime: '', kind: 'match' as BookingKind, title: '', status: 'confirmed' as BookingStatus, notes: '',
+    startTime: '', endTime: '', kind: 'match' as BookingKind, bookedBy: 'direct' as BookedBy, title: '', status: 'confirmed' as BookingStatus, notes: '',
     eventType: 'half_day' as EventType | '', matchCount: 1 as number | '',
   });
   const promoters = usePromoters();
@@ -43,14 +43,17 @@ export function BookingPage() {
   const [loaded, setLoaded] = useState(isNew);
   const [payFor, setPayFor] = useState<PartyRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Clash confirmation: picking a slot that overlaps a booking, or saving times that overlap. */
+  const [ask, setAsk] = useState<{ start: string; end: string; slot?: { id: string; name: string } } | null>(null);
+  const [okKey, setOkKey] = useState(''); // ground|date|start|end the user already agreed to double-book
 
   // Load an existing booking into the form.
   useEffect(() => {
     const b = existing.data;
     if (!b || loaded) return;
-    setF({ groundId: b.groundId, date: b.date, slotTemplateId: b.slotTemplateId ?? '', startTime: b.startTime, endTime: b.endTime, kind: b.kind, title: b.title ?? '', status: b.status, notes: b.notes ?? '', eventType: b.eventType ?? '', matchCount: b.matchCount ?? 1 });
+    setF({ groundId: b.groundId, date: b.date, slotTemplateId: b.slotTemplateId ?? '', startTime: b.startTime, endTime: b.endTime, kind: b.kind, bookedBy: b.bookedBy, title: b.title ?? '', status: b.status, notes: b.notes ?? '', eventType: b.eventType ?? '', matchCount: b.matchCount ?? 1 });
     const ps = b.parties.map(fromParty);
-    if (b.kind === 'match') {
+    if (b.kind === 'match' && b.bookedBy === 'direct') {
       setParties([ps.find((p) => p.side === 'A') ?? blankParty('A'), ps.find((p) => p.side === 'B') ?? blankParty('B')]);
     } else setParties(ps.length ? ps : [blankParty('client')]);
     setLoaded(true);
@@ -83,6 +86,8 @@ export function BookingPage() {
   const bookedFor = (s: { id: string; startTime: string; endTime: string }) => others.find((x) => x.slotTemplateId
     ? x.slotTemplateId === s.id || (x.startTime <= s.startTime && s.endTime <= x.endTime)
     : x.startTime < s.endTime && s.startTime < x.endTime);
+  /** Another booking whose times overlap this slot (e.g. Morning 8–12 booked while looking at Late morning 10–2). */
+  const clashOf = (s: { startTime: string; endTime: string }) => others.find((x) => x.startTime < s.endTime && s.startTime < x.endTime);
   const overlapping = f.startTime && f.endTime && f.startTime < f.endTime
     ? others.filter((x) => x.startTime < f.endTime && f.startTime < x.endTime) : [];
   const fromSlot = params.get('existing') === '1';
@@ -116,7 +121,7 @@ export function BookingPage() {
     parties.forEach(async (p) => {
       if (p.touched) return;
       const qs = new URLSearchParams({
-        groundId: f.groundId, kind: f.kind, ...(f.slotTemplateId ? { slotTemplateId: f.slotTemplateId } : {}), ...(p.teamId ? { teamId: p.teamId } : {}),
+        groundId: f.groundId, kind: f.kind, bookedBy: f.bookedBy, ...(f.slotTemplateId ? { slotTemplateId: f.slotTemplateId } : {}), ...(p.teamId ? { teamId: p.teamId } : {}),
         ...(f.kind === 'event' && f.eventType ? { eventType: f.eventType, ...(f.eventType === 'tournament' && f.matchCount ? { matchCount: String(f.matchCount) } : {}) } : {}),
       });
       try {
@@ -125,17 +130,18 @@ export function BookingPage() {
       } catch { /* leave blank */ }
     });
     return () => { stale = true; };
-  }, [f.groundId, f.slotTemplateId, f.kind, f.eventType, f.matchCount, priceKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [f.groundId, f.slotTemplateId, f.kind, f.bookedBy, f.eventType, f.matchCount, priceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setParty = (key: string, patch: Partial<PartyRow>) => setParties((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
-  function setKind(kind: BookingKind) {
-    if (kind === f.kind) return;
-    setF({ ...f, kind });
-    // Promoters and teams don't mix: switching to/from a promoter starts the list afresh (keeping paid rows).
-    const keep = parties.filter((p) => p.teamName.trim() && (f.kind === 'promoter') === (kind === 'promoter') ? true : p.paid > 0);
+  /** Match/event × direct/promoter decides the party rows: Team 1 + Team 2, a client, or a promoter. */
+  function arrange(kind: BookingKind, bookedBy: BookedBy) {
+    if (kind === f.kind && bookedBy === f.bookedBy) return;
+    setF({ ...f, kind, bookedBy });
+    // Promoters and teams don't mix: switching to/from a promoter starts afresh (keeping paid rows).
+    const keep = parties.filter((p) => p.teamName.trim() && (f.bookedBy === bookedBy || p.paid > 0));
     const named = keep.map((p) => ({ ...p, touched: p.id ? p.touched : false }));
-    if (kind === 'promoter') setParties([{ ...(named[0] ?? blankParty('client')), side: 'client' }]);
+    if (bookedBy === 'promoter') setParties([{ ...(named[0] ?? blankParty('client')), side: 'client' }]);
     else if (kind === 'event') setParties(named.length ? named.map((p) => ({ ...p, side: 'client' })) : [blankParty('client')]);
     else setParties([{ ...(named[0] ?? blankParty('A')), side: 'A' }, { ...(named[1] ?? blankParty('B')), side: 'B' }]);
   }
@@ -157,13 +163,17 @@ export function BookingPage() {
     setClash(false);
     if (!f.groundId) return setError(new Error('Choose a ground'));
     if (!f.startTime || !f.endTime || f.startTime >= f.endTime) return setError(new Error('End time must be after start time'));
-    if (f.kind === 'promoter' && !parties[0]?.teamId) return setError(new Error('Choose the promoter'));
+    if (f.bookedBy === 'promoter' && !parties[0]?.teamId) return setError(new Error('Choose the promoter'));
     const ambiguous = parties.find((p) => !p.teamId && p.teamName.trim() && !p.newTeam && teamList.some((t) => nameKey(t.name) === nameKey(p.teamName)));
     if (ambiguous) return setError(new Error(`Pick which “${ambiguous.teamName.trim()}” you mean, or mark it as a new team.`));
+    if (!allowOverlap && overlapping.length) {
+      if (okKey === `${f.groundId}|${f.date}|${f.startTime}|${f.endTime}`) allowOverlap = true;
+      else return setAsk({ start: f.startTime, end: f.endTime });
+    }
     setBusy(true);
     const body = {
       groundId: f.groundId, date: f.date, slotTemplateId: f.slotTemplateId || null, startTime: f.startTime, endTime: f.endTime,
-      kind: f.kind, title: f.title || null, status: f.status, notes: f.notes || null, allowOverlap,
+      kind: f.kind, bookedBy: f.bookedBy, title: f.title || null, status: f.status, notes: f.notes || null, allowOverlap,
       eventType: f.kind === 'event' ? f.eventType || null : null,
       matchCount: f.kind === 'event' && f.eventType === 'tournament' ? f.matchCount || 1 : null,
       parties: parties.filter((p) => p.teamName.trim()).map((p) => ({
@@ -241,7 +251,20 @@ export function BookingPage() {
         )}
 
         <form onSubmit={(e) => save(e)} className="space-y-5">
-          <Segmented value={f.kind} onChange={setKind} options={[{ value: 'match', label: '2 teams' }, { value: 'promoter', label: 'Promoter' }, { value: 'event', label: 'Event' }]} />
+          <Card className="grid grid-cols-2 gap-3 p-4">
+            <Field label="Booking type">
+              <Select value={f.kind} onChange={(e) => arrange(e.target.value as BookingKind, f.bookedBy)}>
+                <option value="match">Match</option>
+                <option value="event">Event</option>
+              </Select>
+            </Field>
+            <Field label="Booked by">
+              <Select value={f.bookedBy} onChange={(e) => arrange(f.kind, e.target.value as BookedBy)}>
+                <option value="direct">{f.kind === 'match' ? '2 teams' : 'Client'}</option>
+                <option value="promoter">Promoter</option>
+              </Select>
+            </Field>
+          </Card>
 
           <Card className="space-y-4 p-4">
             <Field label="Ground">
@@ -259,13 +282,16 @@ export function BookingPage() {
                   {slotOptions.map((s) => {
                     const taken = bookedFor(s);
                     const sel = f.slotTemplateId === s.id;
+                    const blocked = !sel && !taken && !!clashOf(s);
                     return (
-                      <button type="button" key={s.id} onClick={() => setF({ ...f, slotTemplateId: s.id, startTime: s.startTime, endTime: s.endTime })}
+                      <button type="button" key={s.id} aria-disabled={blocked}
+                        onClick={() => (blocked ? setAsk({ start: s.startTime, end: s.endTime, slot: { id: s.id, name: s.name } }) : setF({ ...f, slotTemplateId: s.id, startTime: s.startTime, endTime: s.endTime }))}
                         className={cx('max-w-[11rem] rounded-xl border px-3 py-2 text-left',
-                          sel ? 'border-pitch bg-pitch text-white' : taken ? (bookingState(taken) === 'full' ? 'border-full/30 bg-full-bg' : 'border-partial/30 bg-partial-bg') : 'border-line bg-white')}>
+                          sel ? 'border-pitch bg-pitch text-white' : taken ? (bookingState(taken) === 'full' ? 'border-full/30 bg-full-bg' : 'border-partial/30 bg-partial-bg') : blocked ? 'cursor-not-allowed border-line bg-line/40 opacity-70' : 'border-line bg-white')}>
                         <div className="text-sm font-bold">{s.name}</div>
                         <div className={cx('text-xs tabular', sel ? 'text-white/75' : 'text-muted')}>{fmtRange(s.startTime, s.endTime)}</div>
-                        {taken && <div className={cx('truncate text-[11px] font-semibold', sel ? 'text-white' : bookingState(taken) === 'full' ? 'text-full' : 'text-partial')}>Booked: {bookingTeams(taken)}</div>}
+                        {taken ? <div className={cx('truncate text-[11px] font-semibold', sel ? 'text-white' : bookingState(taken) === 'full' ? 'text-full' : 'text-partial')}>Booked: {bookingTeams(taken)}</div>
+                          : clashOf(s) && <div className={cx('truncate text-[11px] font-semibold', sel ? 'text-white' : 'text-partial')}>⚠ Overlaps {fmtRange(clashOf(s)!.startTime, clashOf(s)!.endTime)}</div>}
                       </button>
                     );
                   })}
@@ -301,22 +327,22 @@ export function BookingPage() {
             )}
           </Card>
 
-          {f.kind === 'promoter' ? (
-            <PromoterSection row={parties[0] ?? blankParty('client')} promoters={promoters.data ?? []}
+          {f.bookedBy === 'promoter' ? (
+            <PromoterSection perSlot={f.kind === 'match'} row={parties[0] ?? blankParty('client')} promoters={promoters.data ?? []}
               onPick={(t) => setParties([{ ...(parties[0] ?? blankParty('client')), side: 'client', teamId: t.id, teamName: t.name, pocName: t.poc?.name, pocMobile: t.poc?.mobile, touched: false, amountDue: '' }])}
               onAmount={(v) => setParty(parties[0].key, { amountDue: v, touched: true })}
               onDefault={() => setParty(parties[0].key, { touched: false })}
               onPay={() => setPayFor(parties[0])} />
           ) : (
           <section>
-            <h3 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-muted">{f.kind === 'match' ? 'Teams · price per team' : 'Clients · price per client'}</h3>
+            <h3 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-muted">{f.kind === 'match' ? 'Team 1 – Team 2 · price per team' : 'Client · name and POC'}</h3>
             <div className="space-y-3">
               {parties.map((p, i) => {
                 const team = teamList.find((t) => t.id === p.teamId);
                 return (
                   <Card key={p.key} className="space-y-3 p-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold">{f.kind === 'match' ? `Team ${p.side}` : `Client ${i + 1}`}</span>
+                      <span className="text-sm font-bold">{f.kind === 'match' ? `Team ${p.side === 'A' ? 1 : 2}` : parties.length > 1 ? `Client ${i + 1}` : 'Client'}</span>
                       {f.kind === 'event' && parties.length > 1 && !p.paid && (
                         <button type="button" className="text-xs font-semibold text-full" onClick={() => setParties(parties.filter((r) => r.key !== p.key))}>Remove</button>
                       )}
@@ -327,11 +353,11 @@ export function BookingPage() {
                     <TeamPicker value={{ teamId: p.teamId, teamName: p.teamName, newTeam: p.newTeam, contactName: p.contactName, contactMobile: p.contactMobile }}
                       teams={teamList.some((t) => t.id === p.teamId) || !p.teamId ? teamList : [...teamList, { id: p.teamId, name: p.teamName, notes: null, active: false, bookingCount: 0, contacts: [], poc: p.pocName ? { contactId: '', name: p.pocName, mobile: p.pocMobile ?? '' } : null }]}
                       exclude={chosenIds.filter((x) => x !== p.teamId)}
-                      placeholder={f.kind === 'match' ? 'Optional — leave empty if not known yet' : 'Client / team name'}
+                      placeholder={f.kind === 'match' ? 'Optional — leave empty if not known yet' : 'Client name (add POC + mobile for a new client)'}
                       onChange={(v: TeamRef) => setParty(p.key, { teamId: v.teamId, teamName: v.teamName, newTeam: v.newTeam, contactName: v.contactName, contactMobile: v.contactMobile })} />
                     {p.teamName.trim() && (
                       <div className="flex items-end gap-3">
-                        <Field label="Amount for this team" className="flex-1">
+                        <Field label={f.kind === 'match' ? 'Amount for this team' : 'Amount'} className="flex-1">
                           <MoneyInput value={p.amountDue} onChange={(v) => setParty(p.key, { amountDue: v, touched: true })} />
                         </Field>
                         {p.touched && !p.id && (
@@ -366,6 +392,23 @@ export function BookingPage() {
 
           <Field label="Notes"><Textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="Anything to remember" /></Field>
 
+          {ask && (
+            <ConfirmSheet title="This clashes with another booking" confirmLabel={ask.slot ? 'Yes, use this slot' : 'Yes, double-book'}
+              onCancel={() => setAsk(null)}
+              onConfirm={() => {
+                const a = ask;
+                setAsk(null);
+                setOkKey(`${f.groundId}|${f.date}|${a.start}|${a.end}`);
+                if (a.slot) setF({ ...f, slotTemplateId: a.slot.id, startTime: a.start, endTime: a.end });
+                else save(undefined, true);
+              }}>
+              <p><b>{ask.slot ? `${ask.slot.name} ` : ''}{fmtRange(ask.start, ask.end)}</b> on <b>{fmtDate(f.date)}</b> overlaps:</p>
+              <ul className="my-2 list-disc space-y-0.5 pl-5">
+                {others.filter((x) => x.startTime < ask.end && ask.start < x.endTime).map((x) => <li key={x.id}>{fmtRange(x.startTime, x.endTime)} · {bookingTeams(x)}</li>)}
+              </ul>
+              <p>The ground would be double-booked for the overlapping time. Are you sure you still want to book {ask.slot ? 'this slot' : 'these times'}?</p>
+            </ConfirmSheet>
+          )}
           <ErrorNote error={error} />
           {clash && (
             <Button type="button" variant="danger" className="w-full" onClick={() => save(undefined, true)}>Save anyway (double-book)</Button>
@@ -503,11 +546,11 @@ function PaymentHistory({ booking, onChanged }: { booking: Booking; onChanged: (
   );
 }
 
-const bookingState = (b: Booking) => (b.kind !== 'match' || b.parties.filter((p) => p.side !== 'client').length >= 2 ? 'full' : 'partial');
+const bookingState = (b: Booking) => (b.kind === 'event' || b.bookedBy === 'promoter' || b.parties.filter((p) => p.side !== 'client').length >= 2 ? 'full' : 'partial');
 /** "Goru vs ?" / event title, for showing what's in a slot. */
 function bookingTeams(b: Booking): string {
   if (b.kind === 'event') return b.title || b.parties.map((p) => p.teamName).join(', ') || 'Event';
-  if (b.kind === 'promoter') return `${b.parties[0]?.teamName ?? '?'} (promoter)`;
+  if (b.bookedBy === 'promoter') return `${b.parties[0]?.teamName ?? '?'} (promoter)`;
   const a = b.parties.find((p) => p.side === 'A')?.teamName, c = b.parties.find((p) => p.side === 'B')?.teamName;
   return `${a ?? '?'} vs ${c ?? '?'}`;
 }
@@ -545,14 +588,14 @@ function BookedBanner({ bookings, onOpen, onDelete }: { bookings: Booking[]; onO
 }
 
 /** A promoter takes the whole slot at their own rate. Promoters are added in More → Promoters. */
-function PromoterSection({ row, promoters, onPick, onAmount, onDefault, onPay }: {
-  row: PartyRow; promoters: Team[]; onPick: (t: Team) => void; onAmount: (v: number | '') => void; onDefault: () => void; onPay: () => void;
+function PromoterSection({ row, promoters, onPick, onAmount, onDefault, onPay, perSlot }: {
+  perSlot: boolean; row: PartyRow; promoters: Team[]; onPick: (t: Team) => void; onAmount: (v: number | '') => void; onDefault: () => void; onPay: () => void;
 }) {
   const list = promoters.some((t) => t.id === row.teamId) || !row.teamId ? promoters
     : [...promoters, { id: row.teamId, name: row.teamName, notes: null, active: false, bookingCount: 0, contacts: [], poc: row.pocName ? { contactId: '', name: row.pocName, mobile: row.pocMobile ?? '' } : null }];
   return (
     <section>
-      <h3 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-muted">Promoter · price for the whole slot</h3>
+      <h3 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-muted">{perSlot ? 'Promoter · price for the whole slot' : 'Promoter · event price'}</h3>
       <Card className="space-y-3 p-4">
         {!list.length ? (
           <p className="text-sm text-muted">No promoters yet. <Link to="/admin/promoters" className="font-semibold text-pitch">Add one ›</Link></p>
@@ -574,8 +617,8 @@ function PromoterSection({ row, promoters, onPick, onAmount, onDefault, onPay }:
         )}
         {row.teamId && (
           <div className="flex items-end gap-3">
-            <Field label="Amount for the slot" className="flex-1"><MoneyInput value={row.amountDue} onChange={onAmount} /></Field>
-            {row.touched && !row.id && <button type="button" className="mb-3 text-xs font-semibold text-pitch" onClick={onDefault}>Use promoter rate</button>}
+            <Field label={perSlot ? 'Amount for the slot' : 'Amount for the event'} className="flex-1"><MoneyInput value={row.amountDue} onChange={onAmount} /></Field>
+            {row.touched && !row.id && <button type="button" className="mb-3 text-xs font-semibold text-pitch" onClick={onDefault}>{perSlot ? 'Use promoter rate' : 'Use default'}</button>}
           </div>
         )}
         {row.id && <PartyMoney party={row} onPay={onPay} />}

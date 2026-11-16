@@ -17,8 +17,27 @@ const contactBody = z.object({
   active: z.boolean().optional(),           // false = former POC
 });
 
+const rateFields = {
+  defaultRate: zMoney.nullable().optional(),   // promoter: per match
+  rateHalfDay: zMoney.nullable().optional(),
+  rateFullDay: zMoney.nullable().optional(),
+};
+
 export function teamRoutes(db: DB) {
   const r = new Hono<AppEnv>();
+
+  /** Update the active POC's mobile, add a POC if there is none, or retire it when cleared. */
+  async function setMainMobile(t: typeof teams.$inferSelect, raw: string | null) {
+    const cs = await db.select().from(contacts).where(eq(contacts.teamId, t.id));
+    const poc = activePoc(cs);
+    if (!raw) {
+      if (poc) await db.update(contacts).set({ active: false, isPrimary: false }).where(eq(contacts.id, poc.contactId));
+      return;
+    }
+    const mobile = normaliseMobile(raw);
+    if (poc) await db.update(contacts).set({ mobile }).where(eq(contacts.id, poc.contactId));
+    else await db.insert(contacts).values({ orgId: t.orgId, teamId: t.id, name: t.name, mobile, isPrimary: true });
+  }
 
   /** List / search teams (used by the booking screen's team picker). */
   r.get('/', v('query', z.object({
@@ -69,7 +88,7 @@ export function teamRoutes(db: DB) {
   /** Create a team. Names may repeat (different teams, different POCs); pass allowDuplicateName after showing the user the existing ones. */
   r.post('/', v('json', z.object({
     name: z.string().trim().min(1), notes: z.string().optional(), contacts: z.array(contactBody).optional(), allowDuplicateName: z.boolean().optional(),
-    kind: z.enum(TEAM_KINDS).optional(), defaultRate: zMoney.nullable().optional(),
+    kind: z.enum(TEAM_KINDS).optional(), ...rateFields,
   })), async (c) => {
     const orgId = c.get('user').orgId;
     const { contacts: cs, allowDuplicateName, ...body } = c.req.valid('json');
@@ -88,15 +107,21 @@ export function teamRoutes(db: DB) {
 
   r.patch('/:id', v('param', z.object({ id: zId })), v('json', z.object({
     name: z.string().trim().min(1).optional(), notes: z.string().nullable().optional(), active: z.boolean().optional(),
-    kind: z.enum(TEAM_KINDS).optional(), defaultRate: zMoney.nullable().optional(),
+    kind: z.enum(TEAM_KINDS).optional(), ...rateFields,
+    mobile: z.string().trim().nullable().optional(),   // sets the main contact's mobile (used by the Promoters table)
   })), async (c) => {
     const orgId = c.get('user').orgId;
     const { id } = c.req.valid('param');
-    const body = c.req.valid('json');
+    const { mobile, ...body } = c.req.valid('json');
     const patch: Partial<typeof teams.$inferInsert> = { ...body };
     if (body.name) patch.nameKey = nameKey(body.name); // other teams may share the name
-    const [t] = await db.update(teams).set(patch).where(and(eq(teams.id, id), eq(teams.orgId, orgId))).returning();
+    if (mobile && mobile.replace(/\D/g, '').length < 8) throw new HttpError(422, 'Enter a valid mobile number');
+    const where = and(eq(teams.id, id), eq(teams.orgId, orgId));
+    const [t] = Object.keys(patch).length
+      ? await db.update(teams).set(patch).where(where).returning()
+      : await db.select().from(teams).where(where);
     if (!t) throw notFound('Team');
+    if (mobile !== undefined) await setMainMobile(t, mobile);
     return c.json(t);
   });
 

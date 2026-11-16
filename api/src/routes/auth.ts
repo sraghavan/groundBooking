@@ -6,7 +6,7 @@ import { orgs, users } from '../db/schema.js';
 import { hashPassword, issueToken, requireAuth, requireOwner, verifyPassword, type AppEnv } from '../lib/auth.js';
 import { HttpError, notFound } from '../lib/errors.js';
 import { v } from '../lib/validate.js';
-import { zId, zMoney } from '../lib/util.js';
+import { normaliseMobile, zId, zMoney, zTime } from '../lib/util.js';
 
 const publicUser = (u: typeof users.$inferSelect) => ({ id: u.id, name: u.name, email: u.email, mobile: u.mobile, role: u.role, active: u.active });
 
@@ -40,7 +40,7 @@ export function authRoutes(db: DB) {
   r.post('/login', v('json', z.object({ email: z.string().trim().toLowerCase(), password: z.string() })), async (c) => {
     const { email, password } = c.req.valid('json');
     const [u] = await db.select().from(users).where(eq(users.email, email));
-    if (!u || !u.active || !(await verifyPassword(password, u.passwordHash))) throw new HttpError(401, 'Wrong email or password');
+    if (!u || !u.active || !u.passwordHash || !(await verifyPassword(password, u.passwordHash))) throw new HttpError(401, 'Wrong email or password');
     const [org] = await db.select().from(orgs).where(eq(orgs.id, u.orgId));
     const token = await issueToken({ id: u.id, orgId: u.orgId, role: u.role, name: u.name });
     return c.json({ token, user: publicUser(u), org: { id: org.id, name: org.name } });
@@ -58,7 +58,7 @@ export function authRoutes(db: DB) {
     const me = c.get('user');
     const { currentPassword, newPassword } = c.req.valid('json');
     const [u] = await db.select().from(users).where(eq(users.id, me.id));
-    if (!u || !(await verifyPassword(currentPassword, u.passwordHash))) throw new HttpError(401, 'Current password is wrong');
+    if (!u || !u.passwordHash || !(await verifyPassword(currentPassword, u.passwordHash))) throw new HttpError(401, 'Current password is wrong');
     await db.update(users).set({ passwordHash: await hashPassword(newPassword) }).where(eq(users.id, me.id));
     return c.json({ ok: true });
   });
@@ -77,13 +77,17 @@ export function userRoutes(db: DB) {
   });
 
   r.post('/', v('json', z.object({
-    name: z.string().trim().min(1), email: z.email().transform((e) => e.toLowerCase()),
-    mobile: z.string().optional(), password: z.string().min(8), role: z.enum(['owner', 'partner']).default('partner'),
-  })), async (c) => {
-    const body = c.req.valid('json');
-    const [exists] = await db.select({ id: users.id }).from(users).where(eq(users.email, body.email));
-    if (exists) throw new HttpError(409, 'Email already registered');
-    const [u] = await db.insert(users).values({ ...body, orgId: c.get('user').orgId, passwordHash: await hashPassword(body.password) }).returning();
+    // Email and password are optional for now: users are listed by name + mobile; sign-in comes later.
+    name: z.string().trim().min(1), email: z.email().transform((e) => e.toLowerCase()).optional(),
+    mobile: z.string().trim().min(8).transform((m) => normaliseMobile(m)).optional(), password: z.string().min(8).optional(),
+    role: z.enum(['owner', 'partner']).default('partner'),
+  }).refine((b) => !b.password || b.email, { message: 'An email is needed to sign in with a password', path: ['email'] })), async (c) => {
+    const { password, ...body } = c.req.valid('json');
+    if (body.email) {
+      const [exists] = await db.select({ id: users.id }).from(users).where(eq(users.email, body.email));
+      if (exists) throw new HttpError(409, 'Email already registered');
+    }
+    const [u] = await db.insert(users).values({ ...body, orgId: c.get('user').orgId, passwordHash: password ? await hashPassword(password) : null }).returning();
     return c.json(publicUser(u), 201);
   });
 
@@ -114,6 +118,8 @@ export function settingsRoutes(db: DB) {
     name: z.string().trim().min(1).optional(),
     settings: z.object({
       upiId: z.string().optional(), reminderTemplate: z.string().optional(), currency: z.string().optional(),
+      standardSlots: z.array(z.object({ name: z.string().trim().min(1), startTime: zTime, endTime: zTime })
+        .refine((s) => s.startTime < s.endTime, { message: 'End time must be after start time' })).min(1).max(12).optional(),
       eventPrices: z.object({ halfDay: zMoney.nullable(), fullDay: zMoney.nullable(), tournamentPerMatch: zMoney.nullable() }).partial().optional(),
     }).optional(),
   })), async (c) => {

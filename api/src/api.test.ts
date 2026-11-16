@@ -50,6 +50,7 @@ test('full booking flow', async () => {
 
   // Team-specific pricing beats slot default
   const lions = await call('POST', '/teams', { name: 'Lions CC', contacts: [{ name: 'Ravi Kumar', mobile: '98765 43210' }] }, 201);
+  teamIds.push(lions.id);
   // Same name is allowed for a different team, but only after the user has seen the existing one(s)
   const dupe = await call('POST', '/teams', { name: 'lions c.c.' }, 409);
   assert.equal(dupe.details.teams[0].poc.name, 'Ravi Kumar');
@@ -134,6 +135,10 @@ test('full booking flow', async () => {
   const bRows = wb.getWorksheet('Bookings')!.getSheetValues().slice(2) as unknown[][];
   assert.ok(bRows.some((r) => r[10] === 'Lions CC' && r[11] === 'Ravi Kumar' && r[12] === '98765 43210'));
 
+  // Partners: listed by name + mobile until sign-in is set up
+  const noLogin = await call('POST', '/users', { name: 'Field Partner', mobile: '98100 00009' }, 201);
+  assert.deepEqual([noLogin.email, noLogin.mobile], [null, '+919810000009']);
+  await call('POST', '/users', { name: 'X', mobile: '9810000008', password: 'password1' }, 422); // password needs an email
   // Partners
   await call('POST', '/users', { name: 'Partner', email: 'p@x.com', password: 'password1' }, 201);
   const login = await call('POST', '/auth/login', { email: 'P@x.com', password: 'password1' }, 200);
@@ -143,6 +148,8 @@ test('full booking flow', async () => {
 });
 
 // 1x1 PNG
+const teamIds: string[] = [];
+const lionsId = () => teamIds[0]; // a normal team from the first test
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 test('promoters, event pricing and payment accounts', async () => {
@@ -158,21 +165,25 @@ test('promoters, event pricing and payment accounts', async () => {
   const rana = await call('POST', '/teams', { name: 'Rana', kind: 'promoter', defaultRate: 6500, contacts: [{ name: 'Rana', mobile: '9811111111' }] }, 201);
   assert.ok(!(await call('GET', '/teams', undefined, 200)).some((t: any) => t.id === rana.id));
   assert.equal((await call('GET', '/teams?kind=promoter', undefined, 200))[0].defaultRate, 6500);
-  await call('POST', '/pricing/rules', { teamId: rana.id, slotTemplateId: night.id, price: 8000 }, 201);
 
-  // Promoter quote: own rule > own default rate > 2 × team price
-  const q = (extra: string) => call('GET', `/pricing/quote?groundId=${g.id}&kind=promoter&${extra}`, undefined, 200);
-  assert.equal((await q(`teamId=${rana.id}&slotTemplateId=${night.id}`)).price, 8000);
+  // Promoter quote: their standard rate at any ground/slot, else 2 × team price
+  const q = (extra: string) => call('GET', `/pricing/quote?groundId=${g.id}&bookedBy=promoter&${extra}`, undefined, 200);
+  assert.equal((await q(`teamId=${rana.id}&slotTemplateId=${night.id}`)).price, 6500);
   assert.equal((await q(`teamId=${rana.id}&slotTemplateId=${morning.id}`)).price, 6500);
   assert.equal((await q(`slotTemplateId=${morning.id}`)).price, 8000);
+  // Mobile is edited on the promoter row; it updates the main contact
+  await call('PATCH', `/teams/${rana.id}`, { mobile: '9822222222', rateFullDay: 20000 }, 200);
+  const ranaRow = (await call('GET', '/teams?kind=promoter', undefined, 200))[0];
+  assert.deepEqual([ranaRow.poc.mobile, ranaRow.rateFullDay], ['+919822222222', 20000]);
+  await call('PATCH', `/teams/${rana.id}`, { mobile: '12' }, 422);
 
-  const pb = await call('POST', '/bookings', { groundId: g.id, slotTemplateId: morning.id, date: d, startTime: '07:00', endTime: '11:00', kind: 'promoter', parties: [{ side: 'client', teamId: rana.id }] }, 201);
+  const pb = await call('POST', '/bookings', { groundId: g.id, slotTemplateId: morning.id, date: d, startTime: '07:00', endTime: '11:00', bookedBy: 'promoter', parties: [{ side: 'client', teamId: rana.id }] }, 201);
   assert.equal(pb.parties[0].amountDue, 6500);
   const av = await call('GET', `/availability?from=${d}&days=1&groundId=${g.id}`, undefined, 200);
   assert.equal(av[0].days[0].slots[0].state, 'full');
   // A promoter isn't a match team, and a promoter booking needs a promoter
   await call('POST', '/bookings', { groundId: g.id, slotTemplateId: night.id, date: d, startTime: '20:00', endTime: '24:00', parties: [{ side: 'A', teamId: rana.id }] }, 422);
-  await call('POST', '/bookings', { groundId: g.id, slotTemplateId: night.id, date: d, startTime: '20:00', endTime: '24:00', kind: 'promoter', parties: [{ side: 'client', teamName: 'Someone' }] }, 422);
+  await call('POST', '/bookings', { groundId: g.id, slotTemplateId: night.id, date: d, startTime: '20:00', endTime: '24:00', bookedBy: 'promoter', parties: [{ side: 'client', teamName: 'Someone' }] }, 422);
 
   // Event defaults: tournament ₹15,000 per match out of the box; half/full day set in settings
   const tq = await call('GET', `/pricing/quote?groundId=${g.id}&kind=event&eventType=tournament&matchCount=3`, undefined, 200);
@@ -184,9 +195,56 @@ test('promoters, event pricing and payment accounts', async () => {
     parties: [{ side: 'client', teamName: 'Office League' }],
   }, 201);
   assert.deepEqual([ev.eventType, ev.matchCount, ev.parties[0].amountDue], ['tournament', 2, 30000]);
+  // A promoter can also hold an event; the event price applies
+  const pev = await call('POST', '/bookings', { groundId: g.id, kind: 'event', bookedBy: 'promoter', eventType: 'half_day', date: addDays(d, -2), startTime: '07:00', endTime: '11:00', parties: [{ side: 'client', teamId: rana.id }] }, 201);
+  assert.deepEqual([pev.kind, pev.bookedBy, pev.parties[0].amountDue], ['event', 'promoter', 12000]); // no promoter half-day rate → event default
+  assert.equal((await q(`teamId=${rana.id}&kind=event&eventType=full_day`)).price, 20000);             // promoter's full-day rate
   // Switching a booking to a match clears the event fields
   const sw = await call('PATCH', `/bookings/${ev.id}`, { kind: 'match', parties: [{ id: ev.parties[0].id, side: 'A', teamId: ev.parties[0].teamId }] }, 200);
   assert.deepEqual([sw.eventType, sw.matchCount], [null, null]);
+
+  // Group booking for a promoter: several dates × slots in one go, all-or-nothing on clashes
+  const days = [addDays(d, 7), addDays(d, 8)];
+  const grp = await call('POST', '/bookings/bulk', { teamId: rana.id, items: days.flatMap((date) => [morning, night].map((sl: any) => ({ groundId: g.id, slotTemplateId: sl.id, date }))) }, 201);
+  assert.deepEqual([grp.count, grp.totalDue], [4, 4 * 6500]);
+  assert.ok(grp.bookings.every((b: any) => b.bookedBy === 'promoter' && b.parties[0].teamId === rana.id));
+  const again = await call('POST', '/bookings/bulk', { teamId: rana.id, amountDue: 5000, items: [{ groundId: g.id, slotTemplateId: morning.id, date: addDays(d, 9) }, { groundId: g.id, slotTemplateId: morning.id, date: days[0] }] }, 409);
+  assert.equal(again.details.clashes.length, 1);
+  assert.equal((await call('GET', `/bookings?from=${addDays(d, 9)}&to=${addDays(d, 9)}&groundId=${g.id}`, undefined, 200)).length, 0); // nothing booked
+  // Two chosen slots that overlap each other need an explicit double-book
+  const g2 = await call('POST', '/grounds', { name: 'Overlap Oval', cityName: 'Chennai', slots: [
+    { name: 'Morning', startTime: '08:00', endTime: '12:00' }, { name: 'Late morning', startTime: '10:00', endTime: '14:00' },
+  ] }, 201);
+  const [m8, m10] = g2.slots;
+  const both = [m8, m10].map((sl: any) => ({ groundId: g2.id, slotTemplateId: sl.id, date: d }));
+  const ov = await call('POST', '/bookings/bulk', { teamId: rana.id, amountDue: 1, items: both }, 409);
+  assert.deepEqual(ov.details.clashes.map((x: any) => x.reason), ['chosen', 'chosen']);
+  await call('POST', '/bookings/bulk', { teamId: rana.id, amountDue: 1, items: [both[0], { ...both[1], allowOverlap: true }] }, 201);
+  // The table flags a free slot that overlaps a booking
+  const ovAv = await call('GET', `/availability?from=${d}&days=1&groundId=${g2.id}`, undefined, 200);
+  assert.equal(ovAv[0].days[0].slots.length, 2); // both booked (double-booked on purpose)
+  const g3 = await call('POST', '/grounds', { name: 'Flag Field', cityName: 'Chennai', slots: [
+    { name: 'Morning', startTime: '08:00', endTime: '12:00' }, { name: 'Late morning', startTime: '10:00', endTime: '14:00' },
+  ] }, 201);
+  await call('POST', '/bookings/bulk', { teamId: rana.id, amountDue: 1, items: [{ groundId: g3.id, slotTemplateId: g3.slots[0].id, date: d }] }, 201);
+  const flag = (await call('GET', `/availability?from=${d}&days=1&groundId=${g3.id}`, undefined, 200))[0].days[0].slots;
+  assert.equal(flag[1].state, 'free');
+  assert.equal(flag[1].overlaps[0].label, 'Rana (promoter)');
+
+  await call('POST', '/bookings/bulk', { teamId: lionsId(), items: [{ groundId: g.id, slotTemplateId: morning.id, date: addDays(d, 9) }] }, 422);
+
+  // Standard slots: a new ground without slots gets them; "apply" aligns every ground
+  const std = await call('GET', '/grounds/standard-slots', undefined, 200);
+  assert.deepEqual(std.map((x: any) => x.name), ['Morning', 'Late morning', 'Second', 'Day-night', 'Evening', 'Night']);
+  const plain = await call('POST', '/grounds', { name: 'Standard Park', cityName: 'Chennai' }, 201);
+  assert.deepEqual(plain.slots.map((x: any) => `${x.startTime}-${x.endTime}`), ['08:00-12:00', '10:00-14:00', '12:00-16:00', '16:00-20:00', '18:00-22:00', '20:00-24:00']);
+  const applied = await call('POST', '/grounds/standard-slots/apply', {}, 200);
+  assert.ok(applied.added > 0 && applied.updated > 0);
+  const pp = (await call('GET', `/grounds/${g.id}`, undefined, 200)).slots;
+  const live = pp.filter((x: any) => x.active).map((x: any) => x.name);
+  assert.deepEqual(live, std.map((x: any) => x.name));
+  assert.equal(pp.find((x: any) => x.id === morning.id).startTime, '08:00'); // kept & re-timed, so its bookings stay linked
+  assert.equal(pp.find((x: any) => x.id === night.id).active, true);
 
   // Payment accounts with a QR; payments record the receiving account
   const acct = await call('POST', '/accounts', { name: 'Rana HDFC', upiId: 'rana@hdfc', qrImage: PNG }, 201);
@@ -202,7 +260,7 @@ test('promoters, event pricing and payment accounts', async () => {
   assert.equal(dues.payTo.name, 'Rana HDFC');
   const rd = dues.teams.find((t: any) => t.teamId === rana.id);
   assert.equal(rd.teamKind, 'promoter');
-  assert.equal(rd.balance, 4000);
+  assert.equal(rd.balance, 16003); // 4000 left on the slot + 12000 half-day event + 3 × ₹1 test slots
   const msg = decodeURIComponent(rd.contacts[0].whatsappUrl);
   assert.match(msg, /rana@hdfc/);
   assert.match(msg, new RegExp(`/api/v1/public/qr/${acct.id}`));

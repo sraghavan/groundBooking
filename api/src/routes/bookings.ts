@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { DB } from '../db/index.js';
-import { BOOKING_KINDS, BOOKING_STATUSES, EVENT_TYPES, PAYMENT_METHODS, bookingParties, bookings, grounds, paymentAccounts, payments, slotTemplates, teams } from '../db/schema.js';
+import { BOOKED_BY, BOOKING_KINDS, BOOKING_STATUSES, EVENT_TYPES, PAYMENT_METHODS, bookingParties, bookings, grounds, paymentAccounts, payments, slotTemplates, teams } from '../db/schema.js';
 import type { AppEnv } from '../lib/auth.js';
 import { HttpError, notFound } from '../lib/errors.js';
 import { v } from '../lib/validate.js';
@@ -29,6 +29,7 @@ const bookingFields = {
   startTime: zTime,
   endTime: zTime,
   kind: z.enum(BOOKING_KINDS).default('match'),
+  bookedBy: z.enum(BOOKED_BY).default('direct'),
   eventType: z.enum(EVENT_TYPES).nullable().optional(),
   matchCount: z.number().int().min(1).max(500).nullable().optional(),
   title: z.string().trim().nullable().optional(),
@@ -53,9 +54,10 @@ const updateBody = z.object({
 type PartyInput = z.infer<typeof partyInput>;
 
 type Kind = (typeof BOOKING_KINDS)[number];
+type BookedBy = (typeof BOOKED_BY)[number];
 
-function checkParties(kind: Kind, parties: PartyInput[]) {
-  if (kind === 'promoter') {
+function checkParties(kind: Kind, bookedBy: BookedBy, parties: PartyInput[]) {
+  if (bookedBy === 'promoter') {
     if (parties.length > 1 || parties.some((p) => p.side !== 'client')) throw new HttpError(422, 'A promoter booking has one promoter (side "client")');
     if (parties.some((p) => !p.teamId)) throw new HttpError(422, 'Choose a promoter from the list (add new promoters in Admin → Promoters)');
   } else if (kind === 'match') {
@@ -93,13 +95,13 @@ export function bookingRoutes(db: DB) {
   }
 
   /** Promoter bookings must name a promoter; promoters can't be put on a match as a team. */
-  async function checkTeamKinds(orgId: string, kind: Kind, parties: PartyInput[]) {
+  async function checkTeamKinds(orgId: string, bookedBy: BookedBy, parties: PartyInput[]) {
     const ids = parties.map((p) => p.teamId).filter(Boolean) as string[];
     if (!ids.length) return;
     const rows = await db.select({ id: teams.id, kind: teams.kind, name: teams.name }).from(teams).where(and(eq(teams.orgId, orgId), inArray(teams.id, ids)));
     for (const t of rows) {
-      if (kind === 'promoter' && t.kind !== 'promoter') throw new HttpError(422, `${t.name} is not a promoter`);
-      if (kind !== 'promoter' && t.kind === 'promoter') throw new HttpError(422, `${t.name} is a promoter: use a Promoter booking`);
+      if (bookedBy === 'promoter' && t.kind !== 'promoter') throw new HttpError(422, `${t.name} is not a promoter`);
+      if (bookedBy !== 'promoter' && t.kind === 'promoter') throw new HttpError(422, `${t.name} is a promoter: choose "Promoter" as who booked it`);
     }
   }
 
@@ -134,8 +136,8 @@ export function bookingRoutes(db: DB) {
     const { parties, allowOverlap, ...raw } = c.req.valid('json');
     const body = normaliseEvent(raw);
     if (body.startTime >= body.endTime) throw new HttpError(422, 'End time must be after start time');
-    checkParties(body.kind, parties);
-    await checkTeamKinds(user.orgId, body.kind, parties);
+    checkParties(body.kind, body.bookedBy, parties);
+    await checkTeamKinds(user.orgId, body.bookedBy, parties);
     await checkGroundSlot(user.orgId, body.groundId, body.slotTemplateId);
     await assertNoClash(user.orgId, body, allowOverlap);
 
@@ -157,6 +159,67 @@ export function bookingRoutes(db: DB) {
     return c.json({ ...(await getOne(user.orgId, id)), createdTeams }, 201);
   });
 
+  /**
+   * Group booking for a promoter: many slots (any grounds/dates) in one go.
+   * All-or-nothing: if any slot is already taken, nothing is booked and the
+   * clashes are returned so the screen can mark them.
+   */
+  r.post('/bulk', v('json', z.object({
+    teamId: zId,
+    amountDue: zMoney.optional(),            // per slot; omitted → promoter's rate (or default pricing)
+    notes: z.string().nullable().optional(),
+    items: z.array(z.object({
+      groundId: zId, slotTemplateId: zId, date: zDate,
+      allowOverlap: z.boolean().optional(),  // explicit double-book for this slot
+    })).min(1).max(200),
+  })), async (c) => {
+    const user = c.get('user');
+    const { teamId, amountDue, notes, items } = c.req.valid('json');
+    await checkTeamKinds(user.orgId, 'promoter', [{ side: 'client', teamId }]);
+    const [promoter] = await db.select({ id: teams.id }).from(teams).where(and(eq(teams.id, teamId), eq(teams.orgId, user.orgId), eq(teams.kind, 'promoter')));
+    if (!promoter) throw new HttpError(422, 'Choose a promoter');
+
+    const slotIds = [...new Set(items.map((i) => i.slotTemplateId))];
+    const slots = await db.select().from(slotTemplates).where(and(eq(slotTemplates.orgId, user.orgId), inArray(slotTemplates.id, slotIds)));
+    const slotById = new Map(slots.map((sl) => [sl.id, sl]));
+    const seen = new Set<string>();
+    const planned = items.map((i) => {
+      const sl = slotById.get(i.slotTemplateId);
+      if (!sl || sl.groundId !== i.groundId) throw new HttpError(422, 'A chosen slot does not belong to its ground');
+      const k = `${i.groundId}|${i.date}|${i.slotTemplateId}`;
+      if (seen.has(k)) throw new HttpError(422, 'The same slot is chosen twice');
+      seen.add(k);
+      return { ...i, startTime: sl.startTime, endTime: sl.endTime };
+    });
+
+    // A slot clashes if it overlaps an existing booking, or another slot in this
+    // same request (e.g. Morning 8–12 and Late morning 10–2 on one day). A pair
+    // is accepted once either slot of it is marked allowOverlap.
+    const clashes: { groundId: string; slotTemplateId: string; date: string; reason: 'booked' | 'chosen' }[] = [];
+    for (const p of planned) {
+      if (p.allowOverlap) continue;
+      const pick = { groundId: p.groundId, slotTemplateId: p.slotTemplateId, date: p.date };
+      if ((await findClashes(db, user.orgId, p)).length) clashes.push({ ...pick, reason: 'booked' });
+      else if (planned.some((o) => o !== p && !o.allowOverlap && o.groundId === p.groundId && o.date === p.date && o.startTime < p.endTime && p.startTime < o.endTime)) clashes.push({ ...pick, reason: 'chosen' });
+    }
+    if (clashes.length) throw new HttpError(409, `${clashes.length} of the chosen slots overlap${clashes.length === 1 ? 's' : ''} another booking. Remove ${clashes.length === 1 ? 'it' : 'them'}, or double-book on purpose.`, { clashes });
+
+    const ids = await db.transaction(async (txRaw) => {
+      const tx = txRaw as unknown as DB;
+      const out: string[] = [];
+      for (const p of planned) {
+        const { allowOverlap: _ignored, ...row } = p;
+        const [b] = await tx.insert(bookings).values({ ...row, kind: 'match', bookedBy: 'promoter', notes: notes ?? null, orgId: user.orgId, createdBy: user.id }).returning({ id: bookings.id });
+        const price = amountDue ?? (await quotePrice(tx, user.orgId, { ...row, kind: 'match', bookedBy: 'promoter', teamId })).price;
+        await tx.insert(bookingParties).values({ orgId: user.orgId, bookingId: b.id, teamId, side: 'client', amountDue: price });
+        out.push(b.id);
+      }
+      return out;
+    });
+    const created = await loadBookings(db, user.orgId, { ids });
+    return c.json({ count: created.length, totalDue: created.reduce((t, b) => t + b.totalDue, 0), bookings: created }, 201);
+  });
+
   r.patch('/:id', v('param', z.object({ id: zId })), v('json', updateBody), async (c) => {
     const user = c.get('user');
     const { id } = c.req.valid('param');
@@ -170,9 +233,9 @@ export function bookingRoutes(db: DB) {
       await assertNoClash(user.orgId, { groundId: next.groundId, date: next.date, startTime: next.startTime, endTime: next.endTime, excludeId: id }, allowOverlap);
     }
     if (parties) {
-      checkParties(next.kind, parties);
-      await checkTeamKinds(user.orgId, next.kind, parties);
-    } else if (patch.kind && patch.kind !== cur.kind && cur.parties.length) {
+      checkParties(next.kind, next.bookedBy, parties);
+      await checkTeamKinds(user.orgId, next.bookedBy, parties);
+    } else if (((patch.kind && patch.kind !== cur.kind) || (patch.bookedBy && patch.bookedBy !== cur.bookedBy)) && cur.parties.length) {
       throw new HttpError(422, 'Send the updated teams when changing the booking type');
     }
 

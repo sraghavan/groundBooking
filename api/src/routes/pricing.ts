@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import type { DB } from '../db/index.js';
-import { BOOKING_KINDS, EVENT_TYPES, grounds, priceRules, slotTemplates, teams } from '../db/schema.js';
+import { BOOKED_BY, BOOKING_KINDS, EVENT_TYPES, grounds, priceRules, slotTemplates, teams } from '../db/schema.js';
 import type { AppEnv } from '../lib/auth.js';
 import { HttpError, notFound } from '../lib/errors.js';
 import { v } from '../lib/validate.js';
@@ -23,7 +23,7 @@ export function pricingRoutes(db: DB) {
   /** Suggested per-team price for a booking form. */
   r.get('/quote', v('query', z.object({
     groundId: zId, slotTemplateId: zId.optional(), teamId: zId.optional(),
-    kind: z.enum(BOOKING_KINDS).optional(), eventType: z.enum(EVENT_TYPES).optional(), matchCount: z.coerce.number().int().min(1).max(500).optional(),
+    kind: z.enum(BOOKING_KINDS).optional(), bookedBy: z.enum(BOOKED_BY).optional(), eventType: z.enum(EVENT_TYPES).optional(), matchCount: z.coerce.number().int().min(1).max(500).optional(),
   })), async (c) =>
     c.json(await quotePrice(db, c.get('user').orgId, c.req.valid('query'))));
 

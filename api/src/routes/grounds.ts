@@ -5,6 +5,7 @@ import type { DB } from '../db/index.js';
 import { bookings, cities, grounds, slotTemplates } from '../db/schema.js';
 import type { AppEnv } from '../lib/auth.js';
 import { HttpError, notFound } from '../lib/errors.js';
+import { applyStandardSlots, standardSlots } from '../services/slots.js';
 import { v } from '../lib/validate.js';
 import { zId, zMoney, zTime } from '../lib/util.js';
 
@@ -57,6 +58,14 @@ export function groundRoutes(db: DB) {
 
   r.get('/', async (c) => c.json(await withSlots(c.get('user').orgId)));
 
+  /** Standard slot timings, and applying them to every ground. */
+  r.get('/standard-slots', async (c) => c.json(await standardSlots(db, c.get('user').orgId)));
+  r.post('/standard-slots/apply', async (c) => {
+    const orgId = c.get('user').orgId;
+    const result = await db.transaction(async (tx) => applyStandardSlots(tx as unknown as DB, orgId));
+    return c.json(result);
+  });
+
   r.get('/:id', v('param', z.object({ id: zId })), async (c) => {
     const orgId = c.get('user').orgId;
     const [g] = await withSlots(orgId, and(eq(grounds.orgId, orgId), eq(grounds.id, c.req.valid('param').id))!);
@@ -83,7 +92,9 @@ export function groundRoutes(db: DB) {
         if (!city) throw notFound('City');
       }
       const [g] = await tx.insert(grounds).values({ ...body, cityId, orgId }).returning();
-      if (slots?.length) await tx.insert(slotTemplates).values(slots.map((s, i) => ({ sortOrder: i, ...s, orgId, groundId: g.id })));
+      // No slots given → the standard slots.
+      const list = slots ?? (await standardSlots(tx as unknown as DB, orgId));
+      if (list.length) await tx.insert(slotTemplates).values(list.map((s, i) => ({ sortOrder: i, ...s, orgId, groundId: g.id })));
       return g;
     });
     const [full] = await withSlots(orgId, and(eq(grounds.orgId, orgId), eq(grounds.id, ground.id))!);

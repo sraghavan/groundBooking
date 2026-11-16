@@ -19,6 +19,7 @@ import { connect } from '../db/index.js';
 import { bookingParties, bookings, cities, grounds, orgs, priceRules, reminders, slotTemplates, teams, users } from '../db/schema.js';
 import { hashPassword } from '../lib/auth.js';
 import { nameKey, today } from '../lib/util.js';
+import { applyStandardSlots } from '../services/slots.js';
 import { parseWorkbook, type ImportConfig, type ParsedImport } from './excel.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -41,7 +42,7 @@ for (const p of cfg.promoters ?? []) for (const a of [p.name, ...(p.aliases ?? [
 for (const b of parsed.bookings) {
   if (b.kind !== 'event' || b.teams.length !== 1 || /\bboth\b/i.test(b.raw)) continue;
   const promoter = promoterOf.get(b.teams[0]);
-  if (promoter) { b.kind = 'promoter'; b.title = null; b.teams = [`promoter:${promoter}`]; }
+  if (promoter) { b.kind = 'match'; b.bookedBy = 'promoter'; b.title = null; b.teams = [`promoter:${promoter}`]; }
 }
 
 const reportPath = resolve(opt('--report', path.join(root, 'data/import-report.md')));
@@ -117,14 +118,17 @@ try {
       const id = randomUUID();
       bRows.push({
         id, orgId, groundId: groundId.get(b.ground)!, slotTemplateId: slot.id, date: b.date,
-        startTime: slot.start, endTime: slot.end, kind: b.kind, title: b.title,
+        startTime: slot.start, endTime: slot.end, kind: b.kind, bookedBy: b.bookedBy ?? 'direct', title: b.title,
         status: b.date < t0 ? 'completed' : 'confirmed',
         notes: `Imported from Excel ${b.ref}: "${b.raw}"`, createdBy: owner.id,
       });
-      b.teams.forEach((k, i) => pRows.push({ orgId, bookingId: id, teamId: teamId.get(k)!, side: b.kind !== 'match' ? 'client' : i === 0 ? 'A' : 'B', amountDue: 0 }));
+      b.teams.forEach((k, i) => pRows.push({ orgId, bookingId: id, teamId: teamId.get(k)!, side: b.kind !== 'match' || b.bookedBy === 'promoter' ? 'client' : i === 0 ? 'A' : 'B', amountDue: 0 }));
     }
     for (const chunk of chunks(bRows, 500)) await tx.insert(bookings).values(chunk);
     for (const chunk of chunks(pRows, 500)) await tx.insert(bookingParties).values(chunk);
+    // Every ground gets the standard slots (all days); other slots are switched off, bookings keep their times.
+    const std = await applyStandardSlots(tx as unknown as Parameters<typeof applyStandardSlots>[0], orgId);
+    console.log(`Standard slots applied to ${std.grounds} grounds (${std.added} added, ${std.switchedOff} switched off).`);
     console.log(`Imported ${bRows.length} bookings, ${teamRows.length} teams, ${parsed.grounds.length} grounds into "${cfg.orgName}".`);
   });
 } finally {
@@ -146,8 +150,8 @@ function renderReport(p: ParsedImport, fileName: string, todayISO: string): stri
     const dates = bs.map((b) => b.date).sort();
     L.push(`| ${g.name} | ${years.map((y) => bs.filter((b) => b.date.startsWith(y)).length).join(' | ')} | ${bs.length} | ${dates[0] ?? ''} | ${dates.at(-1) ?? ''} |`);
   }
-  const matches = p.bookings.filter((b) => b.kind === 'match');
-  const promo = p.bookings.filter((b) => b.kind === 'promoter');
+  const promo = p.bookings.filter((b) => b.bookedBy === 'promoter');
+  const matches = p.bookings.filter((b) => b.kind === 'match' && b.bookedBy !== 'promoter');
   const promoCount = new Map<string, number>();
   for (const b of promo) promoCount.set(b.teams[0].slice('promoter:'.length), (promoCount.get(b.teams[0].slice('promoter:'.length)) ?? 0) + 1);
   L.push('', `Total ${p.bookings.length}: ${matches.filter((b) => b.teams.length === 2).length} matches with both teams, ${matches.filter((b) => b.teams.length < 2).length} waiting for an opponent ("X vs"), ${promo.length} promoter slots (${[...promoCount].map(([n, c]) => `${n} ${c}`).join(', ') || 'none'}), ${p.bookings.length - matches.length - promo.length} other whole-slot holds (a single name, or "both teams").`, '');

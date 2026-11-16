@@ -58,15 +58,16 @@ function baseFont(ws: ExcelJS.Worksheet) {
 /** "Lions CC vs Tigers XI", "Lions CC vs ?" or "Acme (event)". */
 const EVENT_LABEL = { half_day: 'Half day', full_day: 'Full day', tournament: 'Tournament' } as const;
 function kindLabel(b: BookingView): string {
-  if (b.kind === 'promoter') return 'Promoter';
-  if (b.kind === 'match') return 'Match';
-  if (!b.eventType) return 'Event';
-  return `Event: ${EVENT_LABEL[b.eventType]}${b.eventType === 'tournament' && b.matchCount ? ` (${b.matchCount} matches)` : ''}`;
+  const by = b.bookedBy === 'promoter' ? ' · promoter' : '';
+  if (b.kind === 'match') return `Match${by}`;
+  if (!b.eventType) return `Event${by}`;
+  return `Event: ${EVENT_LABEL[b.eventType]}${b.eventType === 'tournament' && b.matchCount ? ` (${b.matchCount} matches)` : ''}${by}`;
 }
 
 function bookingLabel(b: BookingView): string {
-  if (b.kind === 'promoter') return `${b.parties[0]?.teamName ?? '?'} (promoter)`;
-  if (b.kind === 'event') return b.title || b.parties.map((p) => p.teamName).join(', ') || 'Event';
+  const names = b.parties.map((p) => p.teamName).join(', ');
+  if (b.kind === 'event') return b.title || (names ? `${names}${b.bookedBy === 'promoter' ? ' (promoter)' : ''}` : 'Event');
+  if (b.bookedBy === 'promoter') return `${names || '?'} (promoter)`;
   const a = b.parties.find((p) => p.side === 'A')?.teamName, bb = b.parties.find((p) => p.side === 'B')?.teamName;
   return `${a ?? '?'} vs ${bb ?? '?'}`;
 }

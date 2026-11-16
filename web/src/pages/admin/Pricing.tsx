@@ -44,11 +44,10 @@ export function PricingPage() {
   );
 }
 
-/** Rule editor. With fixedTeam (a promoter) the team can't be changed and the price is for the whole slot. */
-export function RuleSheet({ rule, onClose, onSaved, fixedTeam }: { rule: PriceRule | null; onClose: () => void; onSaved: () => void; fixedTeam?: { id: string; name: string } }) {
+function RuleSheet({ rule, onClose, onSaved }: { rule: PriceRule | null; onClose: () => void; onSaved: () => void }) {
   const teams = useTeams();
   const grounds = useGrounds();
-  const [f, setF] = useState({ teamId: fixedTeam?.id ?? rule?.teamId ?? '', groundId: rule?.groundId ?? '', slotTemplateId: rule?.slotTemplateId ?? '', price: (rule?.price ?? '') as number | '' });
+  const [f, setF] = useState({ teamId: rule?.teamId ?? '', groundId: rule?.groundId ?? '', slotTemplateId: rule?.slotTemplateId ?? '', price: (rule?.price ?? '') as number | '' });
   const [error, setError] = useState<unknown>(null);
   const ground = grounds.data?.find((g) => g.id === f.groundId);
 
@@ -68,17 +67,13 @@ export function RuleSheet({ rule, onClose, onSaved, fixedTeam }: { rule: PriceRu
   return (
     <Sheet open onClose={onClose} title={rule ? 'Edit special price' : 'New special price'}>
       <form onSubmit={submit} className="space-y-4">
-        {fixedTeam ? (
-          <p className="text-sm text-muted">Rate for <b className="text-ink">{fixedTeam.name}</b> at a particular ground or slot.</p>
-        ) : (
-          <Field label="Team">
+        <Field label="Team">
             <Select value={f.teamId} onChange={(e) => setF({ ...f, teamId: e.target.value })}>
               <option value="">Any team</option>
               {rule?.teamId && rule.teamKind === 'promoter' && <option value={rule.teamId}>{rule.teamName} (promoter)</option>}
               {teams.data?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </Select>
           </Field>
-        )}
         <Field label="Ground">
           <Select value={f.groundId} onChange={(e) => setF({ ...f, groundId: e.target.value, slotTemplateId: '' })}>
             <option value="">Any ground</option>
@@ -93,7 +88,7 @@ export function RuleSheet({ rule, onClose, onSaved, fixedTeam }: { rule: PriceRu
             </Select>
           </Field>
         )}
-        <Field label={fixedTeam || rule?.teamKind === 'promoter' ? 'Price for the whole slot' : 'Price per team'}><MoneyInput value={f.price} onChange={(v) => setF({ ...f, price: v })} /></Field>
+        <Field label={rule?.teamKind === 'promoter' ? 'Price for the whole slot' : 'Price per team'}><MoneyInput value={f.price} onChange={(v) => setF({ ...f, price: v })} /></Field>
         <ErrorNote error={error} />
         <Button className="w-full">Save</Button>
         {rule && <Button type="button" variant="danger" className="w-full" onClick={remove}>Delete</Button>}

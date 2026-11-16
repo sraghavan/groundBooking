@@ -39,10 +39,12 @@ export async function downloadFile(path: string, filename: string) {
 
 // ---------- types ----------
 export type Role = 'owner' | 'partner';
-export type User = { id: string; name: string; email: string; mobile: string | null; role: Role; active: boolean };
+export type User = { id: string; name: string; email: string | null; mobile: string | null; role: Role; active: boolean };
 export type EventPrices = { halfDay?: number | null; fullDay?: number | null; tournamentPerMatch?: number | null };
 export const DEFAULT_TOURNAMENT_PER_MATCH = 15000;
-export type OrgSettings = { upiId?: string; reminderTemplate?: string; currency?: string; eventPrices?: EventPrices };
+export type StandardSlot = { name: string; startTime: string; endTime: string };
+export type OrgSettings = {
+  standardSlots?: StandardSlot[]; upiId?: string; reminderTemplate?: string; currency?: string; eventPrices?: EventPrices };
 export type Me = { user: User; org: { id: string; name: string; settings: OrgSettings } };
 
 export type City = { id: string; name: string };
@@ -59,10 +61,12 @@ export type Contact = { id: string; teamId: string; name: string; mobile: string
 /** Team names aren't unique: the active POC (name + mobile) tells same-named teams apart. */
 export type Poc = { contactId: string; name: string; mobile: string } | null;
 export type TeamKind = 'team' | 'promoter';
-export type Team = { id: string; name: string; kind?: TeamKind; defaultRate?: number | null; notes: string | null; active: boolean; bookingCount: number; contacts: Contact[]; poc: Poc };
+export type Team = { id: string; name: string; kind?: TeamKind; defaultRate?: number | null; rateHalfDay?: number | null; rateFullDay?: number | null; notes: string | null; active: boolean; bookingCount: number; contacts: Contact[]; poc: Poc };
 export type SameNameTeam = { id: string; name: string; poc: Poc };
 
-export type BookingKind = 'match' | 'promoter' | 'event';
+export type BookingKind = 'match' | 'event';
+/** direct = 2 teams (match) or the client (event); promoter = a promoter holds the slot. */
+export type BookedBy = 'direct' | 'promoter';
 export type EventType = 'half_day' | 'full_day' | 'tournament';
 export const EVENT_LABEL: Record<EventType, string> = { half_day: 'Half day', full_day: 'Full day', tournament: 'Tournament' };
 export type BookingStatus = 'confirmed' | 'completed' | 'partial' | 'cancelled';
@@ -75,14 +79,16 @@ export type PaymentAccount = {
 };
 export type Booking = {
   id: string; groundId: string; groundName: string; cityId: string; cityName: string; slotTemplateId: string | null;
-  date: string; startTime: string; endTime: string; kind: BookingKind; eventType: EventType | null; matchCount: number | null; title: string | null; status: BookingStatus; notes: string | null;
+  date: string; startTime: string; endTime: string; kind: BookingKind; bookedBy: BookedBy; eventType: EventType | null; matchCount: number | null; title: string | null; status: BookingStatus; notes: string | null;
   parties: Party[]; totalDue: number; totalPaid: number; balance: number; payments?: Payment[]; createdTeams?: string[];
 };
 
 export type SlotState = 'free' | 'partial' | 'full';
 export type SlotCell = {
   key: string; slotTemplateId: string | null; name: string | null; startTime: string; endTime: string; defaultPrice: number | null; state: SlotState;
-  booking: { id: string; kind: BookingKind; title: string | null; status: BookingStatus; startTime: string; endTime: string; balance: number; teams: string[] } | null;
+  /** Free, but its times overlap a booking: booking it needs an explicit double-book. */
+  overlaps?: { bookingId: string; startTime: string; endTime: string; label: string }[];
+  booking: { id: string; kind: BookingKind; bookedBy: BookedBy; title: string | null; status: BookingStatus; startTime: string; endTime: string; balance: number; teams: string[] } | null;
 };
 export type GroundAvailability = { groundId: string; groundName: string; cityId: string; cityName: string; days: { date: string; slots: SlotCell[] }[] };
 

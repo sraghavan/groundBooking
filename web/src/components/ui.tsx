@@ -153,3 +153,20 @@ export const StatusBadge = ({ status }: { status: string }) => {
   const label: Record<string, string> = { confirmed: 'Confirmed', completed: 'Completed', partial: 'Not completed', cancelled: 'Cancelled' };
   return <span className={cx('rounded-full px-2 py-0.5 text-xs font-semibold', map[status])}>{label[status] ?? status}</span>;
 };
+
+/** In-app "are you sure?" box (not a browser dialog). */
+export function ConfirmSheet({ title, children, confirmLabel, onConfirm, onCancel }: {
+  title: string; children: ReactNode; confirmLabel: string; onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <Sheet open onClose={onCancel} title={title}>
+      <div className="space-y-4">
+        <div className="text-sm">{children}</div>
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" className="flex-1" onClick={onCancel}>No, go back</Button>
+          <Button type="button" variant="danger" className="flex-1" onClick={onConfirm}>{confirmLabel}</Button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}

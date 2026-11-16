@@ -81,7 +81,7 @@ const rana = await call('POST', '/teams', { name: 'Rana', kind: 'promoter', defa
 await call('POST', '/teams', { name: 'Ravinder', kind: 'promoter', defaultRate: 6500, contacts: [{ name: 'Ravinder', mobile: '9810000002' }] });
 for (const d of [1, 2, 3]) {
   const s = grounds[1].slots[0];
-  await call('POST', '/bookings', { groundId: grounds[1].id, slotTemplateId: s.id, date: addDays(t0, d), startTime: s.startTime, endTime: s.endTime, kind: 'promoter', parties: [{ side: 'client', teamId: rana.id }] }).catch(() => null);
+  await call('POST', '/bookings', { groundId: grounds[1].id, slotTemplateId: s.id, date: addDays(t0, d), startTime: s.startTime, endTime: s.endTime, bookedBy: 'promoter', parties: [{ side: 'client', teamId: rana.id }] }).catch(() => null);
 }
 await call('POST', '/bookings', { groundId: grounds[0].id, kind: 'event', eventType: 'full_day', title: 'Corporate T10 Day', date: addDays(t0, 9), startTime: '06:30', endTime: '15:00', parties: [{ side: 'client', teamName: 'Acme Technologies', amountDue: 18000 }] });
 

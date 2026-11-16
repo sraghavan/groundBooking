@@ -9,13 +9,14 @@ import { LoginPage } from './pages/Login';
 import { HomePage } from './pages/Home';
 import { GroundWeekPage } from './pages/GroundWeek';
 import { BookingPage } from './pages/Booking';
+import { GroupBookingPage } from './pages/GroupBooking';
 import { DuesPage } from './pages/Dues';
 import { ReportsPage } from './pages/Reports';
 import { MorePage } from './pages/More';
 import { GroundsAdminPage, GroundEditPage } from './pages/admin/Grounds';
 import { TeamsAdminPage, TeamDetailPage } from './pages/admin/Teams';
 import { PricingPage } from './pages/admin/Pricing';
-import { PromotersPage, PromoterDetailPage } from './pages/admin/Promoters';
+import { PromotersPage } from './pages/admin/Promoters';
 import { AccountsPage } from './pages/admin/Accounts';
 import { PartnersPage } from './pages/admin/Partners';
 import { SettingsPage } from './pages/admin/Settings';
@@ -71,6 +72,7 @@ const router = createBrowserRouter([
       { path: '/', element: <HomePage /> },
       { path: '/grounds/:id/week', element: <GroundWeekPage /> },
       { path: '/bookings/new', element: <BookingRoute /> },
+      { path: '/bookings/group', element: <GroupBookingPage /> },
       { path: '/bookings/:id', element: <BookingRoute /> },
       { path: '/dues', element: <DuesPage /> },
       { path: '/reports', element: <ReportsPage /> },
@@ -81,7 +83,6 @@ const router = createBrowserRouter([
       { path: '/admin/teams/:id', element: <TeamDetailPage /> },
       { path: '/admin/pricing', element: <PricingPage /> },
       { path: '/admin/promoters', element: <PromotersPage /> },
-      { path: '/admin/promoters/:id', element: <PromoterDetailPage /> },
       { path: '/admin/accounts', element: <AccountsPage /> },
       { path: '/admin/partners', element: <PartnersPage /> },
       { path: '/admin/settings', element: <SettingsPage /> },

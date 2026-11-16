@@ -42,9 +42,9 @@ One service serves both the API (`/api/v1`) and the web app. Migrations run auto
 
 ```
 Org ─┬─ City ── Ground ── SlotTemplate   (default name/times/price/days)
-     ├─ Team (kind: team | promoter, promoter default rate) ── Contact (POC: name, mobile)
+     ├─ Team (kind: team | promoter; promoter rates per match / half day / full day) ── Contact (POC: name, mobile)
      ├─ PriceRule (team? ground? slot? → price)   most specific wins
-     ├─ Booking (ground, date, start/end, match|promoter|event, event type, matches, status)
+     ├─ Booking (ground, date, start/end, match|event, booked by direct|promoter, event type, matches, status)
      │    └─ BookingParty (team, side A/B/client, amountDue)
      │         └─ Payment (amount, date, method, account, ref)
      ├─ PaymentAccount (name, UPI ID, QR image, default)
@@ -54,8 +54,8 @@ Org ─┬─ City ── Ground ── SlotTemplate   (default name/times/price
 
 - **Times are flexible.** Slots are templates; a booking copies a slot's times and can change them, and the calendar shows the booking's actual times. An event can span several slots.
 - **Pricing is per team.** The default comes from the most specific price rule (team + slot, team + ground, team, slot, ground), then the slot price, then the ground default. It's pre-filled on the booking and can be changed.
-- **Booking types.** A slot is booked by *2 teams* (a match), a *promoter* (Rana, Ravinder… hold the whole slot at their own rate), or an *event*: half day, full day, or tournament (priced per match, default ₹15,000).
-- **Promoter rates.** Promoter's rule for that ground/slot, then their default rate, then two teams' price. Set in More → Promoters.
+- **Booking types.** Type is *Match* or *Event* (half day, full day, or tournament priced per match, default ₹15,000). *Booked by* is 2 teams / the client, or a *promoter* (Rana, Ravinder… hold the whole slot).
+- **Promoter rates.** Standard rates, the same at every ground: per match, half day, full day (More → Promoters, edited in place). With no rate set, an event uses the event price and a match uses two teams' price.
 - **Event prices.** Half day / full day / tournament per match, in More → Prices.
 - **Payment accounts.** Several UPI IDs / banks, each with a QR image. A payment records which account received it; reminders use the chosen account's UPI ID and a public QR link (`/api/v1/public/qr/:id`), and on phones the QR image itself can be shared. Set `PUBLIC_URL` in production so links use the right domain.
 - **Status:** `confirmed`, `completed`, `partial` (not completed; reduce the amounts), or `cancelled` (frees the slot; any amount left on it counts as a cancellation charge).
@@ -73,7 +73,7 @@ Org ─┬─ City ── Ground ── SlotTemplate   (default name/times/price
 | Grounds | `GET/POST /grounds`, `GET/PATCH/DELETE /grounds/:id`, `POST /grounds/:id/slots`, `PATCH/DELETE /grounds/slots/:slotId` |
 | Teams | `GET /teams?q=&kind=team\|promoter\|all`, `POST /teams`, `GET/PATCH/DELETE /teams/:id`, `POST /teams/:id/merge`, `POST /teams/:id/contacts`, `PATCH/DELETE /teams/contacts/:cid` |
 | Pricing | `GET /pricing/quote?groundId&slotTemplateId&teamId&kind&eventType&matchCount`, `GET/POST /pricing/rules`, `PATCH/DELETE /pricing/rules/:id` |
-| Bookings | `GET /bookings?from&to&groundId&cityId&teamId`, `POST /bookings`, `GET/PATCH/DELETE /bookings/:id`, `POST /bookings/:id/payments`, `PATCH/DELETE /bookings/payments/:pid` |
+| Bookings | `GET /bookings?from&to&groundId&cityId&teamId`, `POST /bookings`, `POST /bookings/bulk` (promoter group booking, all-or-nothing), `GET/PATCH/DELETE /bookings/:id`, `POST /bookings/:id/payments`, `PATCH/DELETE /bookings/payments/:pid` |
 | Availability | `GET /availability?from&days&cityId&groundId` |
 | Accounts | `GET /accounts`, `POST /accounts`, `PATCH/DELETE /accounts/:id` (owner), public `GET /public/qr/:id` |
 | Dues | `GET /dues?upTo&teamId&accountId` (includes wa.me links), `POST /dues/reminders` |

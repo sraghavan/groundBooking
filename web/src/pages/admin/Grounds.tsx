@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
-import { api, type Ground, type SlotTemplate } from '../../api';
-import { useCities, useGrounds } from '../../hooks';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type Ground, type SlotTemplate, type StandardSlot } from '../../api';
+import { useCities, useGrounds, useMe } from '../../hooks';
 import { cx, fmtRange, inr } from '../../lib';
-import { Button, Card, Empty, ErrorNote, Field, Input, ListLink, MoneyInput, Page, PageHeader, Spinner, Textarea } from '../../components/ui';
+import { Button, Card, ConfirmSheet, Empty, ErrorNote, Field, Input, ListLink, MoneyInput, Page, PageHeader, Spinner, Textarea } from '../../components/ui';
+
+const useStandardSlots = () => useQuery({ queryKey: ['standard-slots'], queryFn: () => api<StandardSlot[]>('/grounds/standard-slots') });
 
 export function GroundsAdminPage() {
   const grounds = useGrounds();
@@ -14,6 +16,7 @@ export function GroundsAdminPage() {
     <>
       <PageHeader title="Grounds" back="/more" action={<Link to="/admin/grounds/new" className="rounded-full bg-pitch px-4 py-2 text-sm font-semibold text-white">+ Add</Link>} />
       <Page className="space-y-5">
+        <StandardSlotsCard />
         {grounds.isLoading ? <Spinner /> : !grounds.data?.length ? <Empty title="No grounds yet"><Link to="/admin/grounds/new" className="font-semibold text-pitch underline">Add a ground</Link></Empty> : (
           [...byCity.entries()].map(([city, gs]) => (
             <section key={city}>
@@ -22,7 +25,7 @@ export function GroundsAdminPage() {
                 {gs.map((g) => (
                   <ListLink key={g.id} to={`/admin/grounds/${g.id}`}
                     title={<span className={cx(!g.active && 'text-muted line-through')}>{g.name}</span>}
-                    sub={g.slots.length ? g.slots.map((s) => `${s.name} ${fmtRange(s.startTime, s.endTime)}`).join(' · ') : 'No slots yet'}
+                    sub={g.slots.some((s) => s.active) ? g.slots.filter((s) => s.active).map((s) => `${s.name} ${fmtRange(s.startTime, s.endTime)}`).join(' · ') : 'No slots yet'}
                     right={g.defaultPrice != null && <span className="text-sm text-muted tabular">{inr(g.defaultPrice)}</span>} />
                 ))}
               </Card>
@@ -50,7 +53,10 @@ export function GroundEditPage() {
   const ground = grounds.data?.find((g) => g.id === id);
 
   const [f, setF] = useState({ name: '', cityName: '', defaultPrice: '' as number | '', address: '', notes: '', active: true });
-  const [slots, setSlots] = useState<SlotRow[]>(isNew ? [newRow('Morning', '07:00', '11:00'), newRow('Afternoon', '12:00', '16:00')] : []);
+  const std = useStandardSlots();
+  const [slots, setSlots] = useState<SlotRow[]>([]);
+  // A new ground starts with the standard slots.
+  useEffect(() => { if (isNew && std.data) setSlots(std.data.map((s) => newRow(s.name, s.startTime, s.endTime))); }, [isNew, std.data]);
   const [loaded, setLoaded] = useState(isNew);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -58,7 +64,7 @@ export function GroundEditPage() {
   useEffect(() => {
     if (loaded || !ground) return;
     setF({ name: ground.name, cityName: ground.cityName, defaultPrice: ground.defaultPrice ?? '', address: ground.address ?? '', notes: ground.notes ?? '', active: ground.active });
-    setSlots(ground.slots.map(toRow));
+    setSlots(ground.slots.filter((s) => s.active).map(toRow)); // switched-off slots stay hidden (their bookings keep their times)
     setLoaded(true);
   }, [ground, loaded]);
 
@@ -84,7 +90,7 @@ export function GroundEditPage() {
         if (!cityId) cityId = (await api<{ id: string }>('/cities', { body: { name: f.cityName.trim() } })).id;
         await api(`/grounds/${id}`, { method: 'PATCH', body: { ...base, cityId, active: f.active } });
         const keep = new Set(slots.map((s) => s.id).filter(Boolean));
-        for (const s of ground!.slots) if (!keep.has(s.id)) await api(`/grounds/slots/${s.id}`, { method: 'DELETE' });
+        for (const s of ground!.slots) if (s.active && !keep.has(s.id)) await api(`/grounds/slots/${s.id}`, { method: 'PATCH', body: { active: false } });
         for (const [i, s] of slots.entries()) {
           if (s.id) await api(`/grounds/slots/${s.id}`, { method: 'PATCH', body: slotPayload(s, i) });
           else await api(`/grounds/${id}/slots`, { body: slotPayload(s, i) });
@@ -135,7 +141,7 @@ export function GroundEditPage() {
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     <Field label="Start"><Input type="time" value={s.startTime} onChange={(e) => setSlot(s.key, { startTime: e.target.value })} /></Field>
-                    <Field label="End"><Input type="time" value={s.endTime} onChange={(e) => setSlot(s.key, { endTime: e.target.value })} /></Field>
+                    <Field label="End"><Input type="time" value={s.endTime === '24:00' ? '00:00' : s.endTime} onChange={(e) => setSlot(s.key, { endTime: e.target.value === '00:00' ? '24:00' : e.target.value })} /></Field>
                     <Field label="₹ / team"><MoneyInput value={s.defaultPrice} onChange={(v) => setSlot(s.key, { defaultPrice: v })} placeholder={f.defaultPrice === '' ? '–' : String(f.defaultPrice)} /></Field>
                   </div>
                   <div className="flex gap-1.5">
@@ -159,5 +165,80 @@ export function GroundEditPage() {
         </form>
       </Page>
     </>
+  );
+}
+
+/** The standard slot timings every ground uses, with "apply to all grounds". */
+function StandardSlotsCard() {
+  const me = useMe();
+  const owner = me.data?.user.role === 'owner';
+  const qc = useQueryClient();
+  const std = useStandardSlots();
+  const [rows, setRows] = useState<(StandardSlot & { key: string })[]>([]);
+  const [error, setError] = useState<unknown>(null);
+  const [msg, setMsg] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (std.data) setRows(std.data.map((s) => ({ ...s, key: crypto.randomUUID() }))); }, [std.data]);
+  const set = (key: string, patch: Partial<StandardSlot>) => { setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x))); setMsg(''); };
+  const dirty = JSON.stringify(rows.map(({ key: _k, ...s }) => s)) !== JSON.stringify(std.data ?? []);
+
+  async function save(): Promise<boolean> {
+    setError(null);
+    const bad = rows.find((s) => !s.name.trim() || !s.startTime || !s.endTime || s.startTime >= s.endTime);
+    if (bad) { setError(new Error(`Check “${bad.name || 'unnamed'}”: it needs a name and an end after the start`)); return false; }
+    try {
+      await api('/settings', { method: 'PATCH', body: { settings: { standardSlots: rows.map(({ key: _k, ...s }) => ({ ...s, name: s.name.trim() })) } } });
+      await Promise.all([qc.invalidateQueries({ queryKey: ['standard-slots'] }), qc.invalidateQueries({ queryKey: ['me'] })]);
+      setMsg('✓ Saved');
+      return true;
+    } catch (err) { setError(err); return false; }
+  }
+
+  async function apply() {
+    setConfirm(false);
+    setBusy(true);
+    try {
+      if (dirty && !(await save())) return;
+      const r = await api<{ grounds: number; added: number; switchedOff: number }>('/grounds/standard-slots/apply', { body: {} });
+      await Promise.all(['grounds', 'availability', 'availability-week', 'availability-range'].map((k) => qc.invalidateQueries({ queryKey: [k] })));
+      setMsg(`✓ Applied to ${r.grounds} grounds${r.switchedOff ? ` · ${r.switchedOff} other slot${r.switchedOff > 1 ? 's' : ''} switched off` : ''}`);
+    } catch (err) { setError(err); } finally { setBusy(false); }
+  }
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div>
+        <h3 className="font-bold">Standard slots</h3>
+        <p className="text-xs text-muted">Used by every ground, all days. New grounds start with these. Booking times can still be changed per booking.</p>
+      </div>
+      {std.isLoading ? <Spinner /> : (
+        <div className="space-y-2">
+          {rows.map((s) => (
+            <div key={s.key} className="grid grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_2rem] items-center gap-2">
+              <Input className="!h-10" disabled={!owner} value={s.name} onChange={(e) => set(s.key, { name: e.target.value })} aria-label="Slot name" />
+              <Input className="!h-10 px-2" disabled={!owner} type="time" value={s.startTime === '24:00' ? '00:00' : s.startTime} onChange={(e) => set(s.key, { startTime: e.target.value })} aria-label="Start" />
+              <Input className="!h-10 px-2" disabled={!owner} type="time" value={s.endTime === '24:00' ? '00:00' : s.endTime} onChange={(e) => set(s.key, { endTime: e.target.value === '00:00' ? '24:00' : e.target.value })} aria-label="End" />
+              {owner && <button type="button" aria-label={`Remove ${s.name}`} className="text-muted" onClick={() => setRows(rows.filter((x) => x.key !== s.key))}>✕</button>}
+            </div>
+          ))}
+          {owner && <button type="button" className="text-sm font-semibold text-pitch" onClick={() => setRows([...rows, { key: crypto.randomUUID(), name: '', startTime: '', endTime: '' }])}>+ Add slot</button>}
+        </div>
+      )}
+      <ErrorNote error={error} />
+      {owner ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty && <Button size="sm" variant="secondary" onClick={save}>Save</Button>}
+          <Button size="sm" disabled={busy} onClick={() => setConfirm(true)}>{busy ? 'Applying…' : 'Apply to all grounds'}</Button>
+          {msg && <span className="text-sm font-semibold text-free">{msg}</span>}
+        </div>
+      ) : <p className="text-xs text-muted">Only the owner can change these.</p>}
+      {confirm && (
+        <ConfirmSheet title="Apply standard slots?" confirmLabel="Yes, apply to all" onCancel={() => setConfirm(false)} onConfirm={apply}>
+          <p>Every ground will get these {rows.length} slots, on all days. A ground's slot with the same name or times is updated in place.</p>
+          <p className="mt-2">Other slots are switched off, not deleted: past bookings keep their times.</p>
+        </ConfirmSheet>
+      )}
+    </Card>
   );
 }

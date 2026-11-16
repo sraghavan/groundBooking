@@ -19,7 +19,19 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull(
 export type EventPrices = { halfDay?: number | null; fullDay?: number | null; tournamentPerMatch?: number | null };
 export const DEFAULT_EVENT_PRICES: Required<EventPrices> = { halfDay: null, fullDay: null, tournamentPerMatch: 15000 };
 
+/** Standard slot timings used by every ground (editable in Admin → Grounds). */
+export type StandardSlot = { name: string; startTime: string; endTime: string };
+export const DEFAULT_STANDARD_SLOTS: StandardSlot[] = [
+  { name: 'Morning', startTime: '08:00', endTime: '12:00' },
+  { name: 'Late morning', startTime: '10:00', endTime: '14:00' },
+  { name: 'Second', startTime: '12:00', endTime: '16:00' },
+  { name: 'Day-night', startTime: '16:00', endTime: '20:00' },
+  { name: 'Evening', startTime: '18:00', endTime: '22:00' },
+  { name: 'Night', startTime: '20:00', endTime: '24:00' },
+];
+
 export type OrgSettings = {
+  standardSlots?: StandardSlot[];
   currency?: string;          // 'INR'
   upiId?: string;             // legacy: moved to payment_accounts (migration 0002)
   reminderTemplate?: string;  // supports {contact} {team} {amount} {details} {upi} {org}
@@ -37,9 +49,9 @@ export const users = pgTable('users', {
   id: id(),
   orgId: orgId(),
   name: text('name').notNull(),
-  email: text('email').notNull(),
+  email: text('email'),                     // null until logins are set up for this user
   mobile: text('mobile'),
-  passwordHash: text('password_hash').notNull(),
+  passwordHash: text('password_hash'),      // null = can't sign in yet
   role: text('role', { enum: ['owner', 'partner'] }).notNull().default('partner'),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
@@ -92,7 +104,10 @@ export const teams = pgTable('teams', {
   name: text('name').notNull(),
   nameKey: text('name_key').notNull(),      // normalised name, for search and duplicate warnings
   kind: text('kind', { enum: TEAM_KINDS }).notNull().default('team'),
-  defaultRate: integer('default_rate'),     // promoter: their rate for a whole slot (price rules can refine per ground/slot)
+  // Promoter standard rates, the same at every ground:
+  defaultRate: integer('default_rate'),     // per match (a whole slot)
+  rateHalfDay: integer('rate_half_day'),    // half-day event
+  rateFullDay: integer('rate_full_day'),    // full-day event
   notes: text('notes'),
   active: boolean('active').notNull().default(true),
   createdAt: createdAt(),
@@ -128,8 +143,10 @@ export const priceRules = pgTable('price_rules', {
   createdAt: createdAt(),
 });
 
-/** match: up to two teams · promoter: a promoter holds the whole slot · event: half/full day or tournament */
-export const BOOKING_KINDS = ['match', 'promoter', 'event'] as const;
+/** What the booking is: a match, or an event (half/full day or tournament). */
+export const BOOKING_KINDS = ['match', 'event'] as const;
+/** Who holds it. direct: 2 teams (match) or the client (event) · promoter: a promoter holds the whole slot. */
+export const BOOKED_BY = ['direct', 'promoter'] as const;
 export const EVENT_TYPES = ['half_day', 'full_day', 'tournament'] as const;
 /** confirmed → upcoming; completed → played in full; partial → not completed (reduced charge); cancelled */
 export const BOOKING_STATUSES = ['confirmed', 'completed', 'partial', 'cancelled'] as const;
@@ -143,6 +160,7 @@ export const bookings = pgTable('bookings', {
   startTime: text('start_time').notNull(),
   endTime: text('end_time').notNull(),
   kind: text('kind', { enum: BOOKING_KINDS }).notNull().default('match'),
+  bookedBy: text('booked_by', { enum: BOOKED_BY }).notNull().default('direct'),
   eventType: text('event_type', { enum: EVENT_TYPES }),   // events only; null on imported/older events
   matchCount: integer('match_count'),                     // tournaments: number of matches (priced per match)
   title: text('title'),

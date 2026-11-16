@@ -22,7 +22,7 @@ export function MorePage() {
           <Card className="divide-y divide-line overflow-hidden">
             <ListLink to="/admin/grounds" title="Grounds & slots" sub="Cities, grounds, slot timings and default prices" />
             <ListLink to="/admin/teams" title="Teams & contacts" sub="Teams and their POCs" />
-            <ListLink to="/admin/promoters" title="Promoters" sub="Rana, Ravinder… and their discounted rates" />
+            <ListLink to="/admin/promoters" title="Promoters" sub="Rana, Ravinder… mobile and standard rates" />
             <ListLink to="/admin/pricing" title="Prices" sub="Event prices, special prices per team / ground / slot" />
             <ListLink to="/admin/accounts" title="Payment accounts" sub="UPI IDs and QR codes for reminders" />
           </Card>
@@ -31,7 +31,7 @@ export function MorePage() {
           <section>
             <h3 className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-muted">Business</h3>
             <Card className="divide-y divide-line overflow-hidden">
-              <ListLink to="/admin/partners" title="Partners" sub="Who can use this app" />
+              <ListLink to="/admin/partners" title="App users" sub="Who uses this app" />
               <ListLink to="/admin/settings" title="Settings" sub="Business name, reminder message" />
             </Card>
           </section>

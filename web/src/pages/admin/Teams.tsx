@@ -143,7 +143,7 @@ export function TeamDetailPage() {
                   <Link key={b.id} to={`/bookings/${b.id}`} className="flex items-center gap-3 px-4 py-3 active:bg-paper">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold">{fmtDate(b.date, { day: 'numeric', month: 'short', year: '2-digit' })} · {b.groundName}</div>
-                      <div className="truncate text-xs text-muted">{fmtRange(b.startTime, b.endTime)} · {b.kind === 'event' ? b.title || 'Event' : b.kind === 'promoter' ? 'Promoter slot' : b.parties.map((p) => p.teamName).join(' vs ')}</div>
+                      <div className="truncate text-xs text-muted">{fmtRange(b.startTime, b.endTime)} · {b.kind === 'event' ? b.title || 'Event' : b.bookedBy === 'promoter' ? 'Promoter slot' : b.parties.map((p) => p.teamName).join(' vs ')}</div>
                     </div>
                     <div className="text-right">
                       <div className={cx('text-sm font-bold tabular', mine.balance > 0 && 'text-full')}>{mine.balance > 0 ? inr(mine.balance) : '✓'}</div>

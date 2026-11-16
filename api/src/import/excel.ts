@@ -28,7 +28,7 @@ export type ImportConfig = {
 
 export type ParsedBooking = {
   ground: string; slotKey: string; date: string;
-  kind: 'match' | 'event' | 'promoter'; title: string | null;
+  kind: 'match' | 'event'; bookedBy?: 'direct' | 'promoter'; title: string | null;
   teams: string[];             // team name keys (canonical), 0–2
   ref: string; raw: string;    // e.g. "Royale!B23", original cell text
 };

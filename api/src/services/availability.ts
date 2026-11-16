@@ -20,23 +20,33 @@ export type SlotCell = {
   endTime: string;
   defaultPrice: number | null;
   state: SlotState;
-  booking: Pick<BookingView, 'id' | 'kind' | 'title' | 'status' | 'startTime' | 'endTime' | 'balance'> & { teams: string[] } | null;
+  /** Free slot whose times overlap an existing booking: booking it needs an explicit double-book. */
+  overlaps?: { bookingId: string; startTime: string; endTime: string; label: string }[];
+  booking: Pick<BookingView, 'id' | 'kind' | 'bookedBy' | 'title' | 'status' | 'startTime' | 'endTime' | 'balance'> & { teams: string[] } | null;
 };
 
 export type GroundDay = { date: string; slots: SlotCell[] };
 export type GroundAvailability = { groundId: string; groundName: string; cityId: string; cityName: string; days: GroundDay[] };
 
 export function bookingState(b: BookingView): SlotState {
-  if (b.kind !== 'match') return 'full';
+  if (b.kind === 'event' || b.bookedBy === 'promoter') return 'full';
   return b.parties.filter((p) => p.side !== 'client').length >= 2 ? 'full' : 'partial';
 }
 
 const summarise = (b: BookingView): NonNullable<SlotCell['booking']> => ({
-  id: b.id, kind: b.kind, title: b.title, status: b.status, startTime: b.startTime, endTime: b.endTime,
+  id: b.id, kind: b.kind, bookedBy: b.bookedBy, title: b.title, status: b.status, startTime: b.startTime, endTime: b.endTime,
   balance: b.balance, teams: b.parties.map((p) => p.teamName),
 });
 
 type Template = typeof slotTemplates.$inferSelect;
+
+/** "Lions vs Tigers", "Rana (promoter)", "Corporate day". */
+function describe(b: BookingView): string {
+  const names = b.parties.map((p) => p.teamName);
+  if (b.kind === 'event') return b.title || names.join(', ') || 'Event';
+  if (b.bookedBy === 'promoter') return `${names[0] ?? '?'} (promoter)`;
+  return names.length ? names.join(' vs ') + (names.length === 1 ? ' vs ?' : '') : 'Booked';
+}
 
 /**
  * Merge a ground's slot templates with that day's bookings. Each booking
@@ -68,7 +78,12 @@ export function buildDay(date: string, templates: Template[], dayBookings: Booki
   }
   for (const t of active) {
     if (used.has(t.id)) continue;
-    cells.push({ key: `t:${t.id}`, slotTemplateId: t.id, name: t.name, startTime: t.startTime, endTime: t.endTime, defaultPrice: t.defaultPrice, state: 'free', booking: null });
+    const clash = dayBookings.filter((b) => overlaps(t.startTime, t.endTime, b.startTime, b.endTime))
+      .map((b) => ({ bookingId: b.id, startTime: b.startTime, endTime: b.endTime, label: describe(b) }));
+    cells.push({
+      key: `t:${t.id}`, slotTemplateId: t.id, name: t.name, startTime: t.startTime, endTime: t.endTime, defaultPrice: t.defaultPrice, state: 'free', booking: null,
+      ...(clash.length ? { overlaps: clash } : {}),
+    });
   }
   return cells.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.endTime.localeCompare(b.endTime));
 }
