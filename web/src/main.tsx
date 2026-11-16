@@ -20,6 +20,7 @@ import { PromotersPage } from './pages/admin/Promoters';
 import { AccountsPage } from './pages/admin/Accounts';
 import { PartnersPage } from './pages/admin/Partners';
 import { SettingsPage } from './pages/admin/Settings';
+import { ImportPage } from './pages/admin/Import';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: true } },
@@ -86,6 +87,7 @@ const router = createBrowserRouter([
       { path: '/admin/accounts', element: <AccountsPage /> },
       { path: '/admin/partners', element: <PartnersPage /> },
       { path: '/admin/settings', element: <SettingsPage /> },
+      { path: '/admin/import', element: <ImportPage /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],
   },

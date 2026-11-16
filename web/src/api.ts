@@ -28,6 +28,19 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   return data as T;
 }
 
+/** POST a file as the raw request body (e.g. the Excel workbook). */
+export async function uploadFile<T = unknown>(path: string, file: Blob): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/octet-stream', ...(auth.token ? { authorization: `Bearer ${auth.token}` } : {}) },
+    body: file,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Upload failed (${res.status})`, data?.details);
+  return data as T;
+}
+
 export async function downloadFile(path: string, filename: string) {
   const res = await fetch(BASE + path, { headers: auth.token ? { authorization: `Bearer ${auth.token}` } : {} });
   if (!res.ok) throw new ApiError(res.status, 'Download failed');

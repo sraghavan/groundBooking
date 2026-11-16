@@ -33,6 +33,7 @@ export function MorePage() {
             <Card className="divide-y divide-line overflow-hidden">
               <ListLink to="/admin/partners" title="App users" sub="Who uses this app" />
               <ListLink to="/admin/settings" title="Settings" sub="Business name, reminder message" />
+              <ListLink to="/admin/import" title="Import from Excel" sub="Replace grounds, teams and bookings from the workbook" />
             </Card>
           </section>
         )}

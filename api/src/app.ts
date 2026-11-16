@@ -11,6 +11,7 @@ import { pricingRoutes } from './routes/pricing.js';
 import { bookingRoutes } from './routes/bookings.js';
 import { accountRoutes, publicRoutes } from './routes/accounts.js';
 import { availabilityRoutes, duesRoutes, exportRoutes, reportRoutes } from './routes/insights.js';
+import { importRoutes } from './routes/import.js';
 
 /** Builds the JSON API. All routes live under /api/v1. */
 export function createApi(db: DB, opts: { log?: boolean } = {}) {
@@ -43,6 +44,7 @@ export function createApi(db: DB, opts: { log?: boolean } = {}) {
   secured.route('/dues', duesRoutes(db));
   secured.route('/reports', reportRoutes(db));
   secured.route('/export', exportRoutes(db));
+  secured.route('/import', importRoutes(db));
   api.route('/', secured);
 
   return new Hono().route('/api/v1', api);
