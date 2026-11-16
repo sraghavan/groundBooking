@@ -20,4 +20,7 @@ if (existsSync(webDist)) {
 }
 
 const port = Number(process.env.PORT ?? 8787);
-serve({ fetch: app.fetch, port }, () => console.log(`API listening on http://localhost:${port}/api/v1`));
+serve({ fetch: app.fetch, port }, () => {
+  const base = process.env.PUBLIC_URL?.replace(/\/$/, '') ?? `http://localhost:${port}`;
+  console.log(`Listening on port ${port} · app ${base} · API ${base}/api/v1`);
+});
